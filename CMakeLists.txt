@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(ART_BUILD_TESTS "Build ${PROJECT_NAME}'s unit tests" ON)
 
 if (ART_BUILD_TESTS)
+    add_definitions(-D ART_BUILD_TESTS)
     add_subdirectory(test)
 endif (ART_BUILD_TESTS)
 
