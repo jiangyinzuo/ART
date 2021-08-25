@@ -10,6 +10,13 @@ if (ART_BUILD_TESTS)
     add_subdirectory(test)
 endif (ART_BUILD_TESTS)
 
+if (MSVC)
+    # MSVC automatically enables BMI / lzcnt with AVX2.
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /arch:AVX2")
+else ()
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx2 -mbmi -mlzcnt")
+endif ()
+
 file(GLOB ART_SRC src/*.cpp)
 add_library(${PROJECT_NAME} STATIC ${ART_SRC})
 target_include_directories(${PROJECT_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

@@ -12,4 +12,11 @@ TEST(ARTNodeTest, NodePtr) {
   AdaptiveRadixTree::TEST_NodePtr();
 }
 
+TEST(ARTNodeTest, Get) {
+  AdaptiveRadixTree art;
+  std::string buf;
+  ASSERT_FALSE(art.Get("hello", 5, buf));
+  ASSERT_TRUE(buf.empty());
+}
+
 }
