@@ -2,13 +2,22 @@
 
 #include <cstdint>
 #include <cstring>
+#include <emmintrin.h>
 #include <immintrin.h>
 
 #include "art/art.h"
+#include "likely.h"
 
 namespace ART_NAMESPACE {
 
 using leaf_node_ptr_t = uint8_t *;
+
+AdaptiveRadixTree::NodePtr AdaptiveRadixTree::NodePtr::NewLeaf(const char *buf, uint8_t len) {
+  char* new_node_ptr = reinterpret_cast<char*>(malloc(static_cast<size_t>(len) + 1));
+  new_node_ptr[0] = len;
+  memcpy(new_node_ptr + 1, buf, len);
+  return AdaptiveRadixTree::NodePtr(new_node_ptr, NodeType::kLeafNode);
+}
 
 bool AdaptiveRadixTree::NodePtr::LeafMatch(uint8_t cur_key_depth,
                                            const char *key_buffer,
@@ -31,7 +40,7 @@ bool AdaptiveRadixTree::NodePtr::LeafMatch(uint8_t cur_key_depth,
 }
 
 AdaptiveRadixTree::NodePtr AdaptiveRadixTree::Node4::FindChild(partial_key_t key_span) {
-  for (int i = 0; i < 4; ++i) {
+  for (int i = 0; i < count; ++i) {
     if (partial_key[i] == key_span) {
       return NodePtr{child_ptrs[i]};
     }
@@ -40,10 +49,11 @@ AdaptiveRadixTree::NodePtr AdaptiveRadixTree::Node4::FindChild(partial_key_t key
 }
 
 AdaptiveRadixTree::NodePtr AdaptiveRadixTree::Node16::FindChild(partial_key_t key_span) {
-  __m256i key_spans = _mm256_set1_epi8(key_span);
-  __m256i _partial_key = _mm256_load_si256(reinterpret_cast<__m256i *>(&partial_key));
-  __m256i result = _mm256_cmpeq_epi8(key_spans, _partial_key);
-  int idx = _mm256_movemask_epi8(result);
+  __m128i key_spans = _mm_set1_epi8(key_span);
+  __m128i _partial_key = _mm_load_si128(reinterpret_cast<const __m128i *>(&partial_key));
+  __m128i result = _mm_cmpeq_epi8(key_spans, _partial_key);
+  int mask = (1 << (count - 1)) - 1;
+  int idx = _mm_movemask_epi8(result) & mask;
   return idx > 0 ? child_ptrs[_tzcnt_u32(static_cast<uint32_t>(idx))] : AdaptiveRadixTree::NodePtr();
 }
 
@@ -62,7 +72,16 @@ bool AdaptiveRadixTree::Insert(const char *key_buffer,
                                uint8_t key_len,
                                const char *value_buffer,
                                size_t value_len) {
+  if (UNLIKELY(root_.IsNullptr())) {
+    NodePtr leaf_ptr = NodePtr::NewLeaf(key_buffer, key_len);
+    return true;
+  }
+
   return false;
+}
+
+AdaptiveRadixTree::~AdaptiveRadixTree() {
+  // TODO
 }
 
 bool AdaptiveRadixTree::Get(const char *key_buffer, uint8_t key_len, std::string &value_buffer) const {
@@ -106,8 +125,12 @@ bool AdaptiveRadixTree::Delete(const char *key_buffer, size_t key_len) {
 void AdaptiveRadixTree::TEST_NodePtr() {
 
   static_assert(sizeof(AdaptiveRadixTree::NodePtr) == sizeof(uint64_t));
+
+  static_assert(sizeof(Node4) == 40);
   static_assert(alignof(Node4) >= kMinAlignment);
-  static_assert(alignof(Node16) == kCacheLineSize);
+
+  static_assert(sizeof(Node16) == 16 + 16 * 8 + 16);
+  static_assert(alignof(Node16) == 16);
   static_assert(alignof(Node16) >= kMinAlignment);
   static_assert(alignof(NodePtr) >= kMinAlignment);
 
@@ -127,6 +150,7 @@ void AdaptiveRadixTree::TEST_NodePtr() {
 
   free(node4);
 }
+
 #endif
 
 }

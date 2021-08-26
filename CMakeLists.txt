@@ -11,10 +11,8 @@ if (ART_BUILD_TESTS)
 endif (ART_BUILD_TESTS)
 
 if (MSVC)
-    # MSVC automatically enables BMI / lzcnt with AVX2.
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /arch:AVX2")
 else ()
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx2 -mbmi -mlzcnt")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mbmi ")
 endif ()
 
 file(GLOB ART_SRC src/*.cpp)
