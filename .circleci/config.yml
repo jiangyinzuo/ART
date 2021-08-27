@@ -1,6 +1,12 @@
 # Use the latest 2.1 version of CircleCI pipeline process engine. See: https://circleci.com/docs/2.0/configuration-reference
 version: 2.1
 
+general:
+  build_dir: build
+
+orbs:
+  codecov: codecov/codecov@3.0.0
+
 commands:
   setup-dependencies:
     steps:
@@ -8,6 +14,7 @@ commands:
           apt-get -y install
           g++-10
           git
+          lcov
 jobs:
   build_with_cmake:
     docker:
@@ -19,10 +26,19 @@ jobs:
       - run: apt-get -y update &&
           apt-get -y install cmake
       - checkout
-      - run: mkdir build
-      - run: cd build && cmake .. -DCMAKE_C_COMPILER=/usr/bin/gcc-10 -DCMAKE_CXX_COMPILER=/usr/bin/g++-10
-      - run: cd build && make -j 2
-      - run: cd build/test && ctest -V
+      - run: cmake .. -DCMAKE_C_COMPILER=/usr/bin/gcc-10 -DCMAKE_CXX_COMPILER=/usr/bin/g++-10
+          -DCODE_COVERAGE=ON -DCMAKE_BUILD_TYPE=Debug
+      - run: make -j 2
+      - run: cd test && ctest -V
+      # Create lcov report
+      # capture coverage info
+      - run: lcov --directory . --capture --output-file coverage.info
+      # filter out system and extra files.
+      # To also not include test code in coverage add them with full path to the patterns: '*/tests/*'
+      - run: lcov --remove coverage.info '/usr/*' "${HOME}"'/.cache/*' --output-file coverage.info
+      # output coverage data for debugging (optional)
+      - run: lcov --list coverage.info
+      - codecov/upload
 
 # Orchestrate or schedule a set of jobs
 workflows:

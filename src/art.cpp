@@ -68,7 +68,8 @@ AdaptiveRadixTree::NodePtr AdaptiveRadixTree::NodePtr::NewLeaf(const partial_key
 bool AdaptiveRadixTree::LeafNode::Insert(const partial_key_t *partial_key_buffer,
                                          uint8_t partial_key_len,
                                          const char *value_buffer,
-                                         uint8_t value_len) {
+                                         uint8_t value_len,
+                                         NodePtr &cur_node) {
   if (no_partial_key) {
     if (partial_key_len == 0) {
       // directly update value
@@ -84,9 +85,13 @@ bool AdaptiveRadixTree::LeafNode::Insert(const partial_key_t *partial_key_buffer
           // these two partial_keys are equal.
           UpdateHasPartialKey(value_buffer, value_len);
           return true;
-        } else {
+        } else if (mis_match_idx == 0) {
+          auto node4 = new Node4;
 
+          cur_node = NodePtr(node4, NodeType::kNode4);
+          return false;
         }
+        // TODO
       } else if (this->partial_key_len > partial_key_len) {
 
       } else {
@@ -167,6 +172,24 @@ inline void AdaptiveRadixTree::LeafNode::GetHasPartialKey(std::string &value_buf
   value_buffer.assign(value_len <= 7 ? value7.buf : reinterpret_cast<char *>(value7.ptr), value_len);
 }
 
+AdaptiveRadixTree::Node4::Node4(const char *prefix_key_buf, uint8_t prefix_key_len)
+    : __prefix_key_ptr_count(0), prefix_key_len(prefix_key_len) {
+  assert(prefix_key_len < 128);
+  if (prefix_key_len <= 10) {
+    memcpy(prefix_key_buf10, prefix_key_buf, prefix_key_len);
+  } else {
+    memcpy(prefix_key_buf4, prefix_key_buf, 4);
+    char *ptr = new char[prefix_key_len - 4];
+    SetPrefixKeyPtr(ptr);
+  }
+}
+
+AdaptiveRadixTree::Node4::~Node4() {
+  if (prefix_key_len > 10) {
+    delete[] GetPrefixKeyPtr();
+  }
+}
+
 AdaptiveRadixTree::NodePtr AdaptiveRadixTree::Node4::FindChild(partial_key_t key_span) {
   for (int i = 0; i < GetCount(); ++i) {
     if (partial_key[i] == key_span) {
@@ -214,7 +237,7 @@ bool AdaptiveRadixTree::Insert(const partial_key_t *key_buffer,
     switch (cur_node.GetNodeType()) {
       case NodeType::kLeafNode: {
         auto leaf_node = cur_node.ToLeafNode();
-        return leaf_node->Insert(key_buffer, key_len, value_buffer, value_len);
+        return leaf_node->Insert(key_buffer, key_len, value_buffer, value_len, cur_node);
       }
       case NodeType::kNode4:break;
       case NodeType::kNode16:break;
@@ -295,6 +318,8 @@ void AdaptiveRadixTree::TEST_Layout() {
 
   static_assert(sizeof(Node4) == 48);
   static_assert(alignof(Node4) >= kMinAlignment);
+
+  // It is Node4's responsibility to free "ptr".
   char *ptr = new char[10];
   Node4 node_4;
   memset(&node_4, 0, sizeof(node_4));
@@ -308,7 +333,6 @@ void AdaptiveRadixTree::TEST_Layout() {
   node_4.DecCount();
   assert(node_4.GetCount() == 1);
   assert(node_4.GetPrefixKeyPtr() == ptr);
-  delete[]ptr;
 
   static_assert(sizeof(Node16) == 16 + 16 * 8 + 16);
   static_assert(alignof(Node16) == 16);

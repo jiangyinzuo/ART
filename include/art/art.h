@@ -11,7 +11,6 @@ namespace ART_NAMESPACE {
 
 constexpr uint64_t kNodeTypeMask = 0b111;
 constexpr size_t kMinAlignment = kNodeTypeMask + 1;
-constexpr size_t kCacheLineSize = 64;
 
 using partial_key_t = char;
 
@@ -26,7 +25,7 @@ class AdaptiveRadixTree {
   };
 
   struct alignas(8) LeafNode;
-  struct alignas(8) Node4;
+  class alignas(8) Node4;
   struct Node16;
   struct Node48;
   struct Node256;
@@ -133,7 +132,8 @@ struct alignas(8) AdaptiveRadixTree::LeafNode {
   bool Insert(const partial_key_t *partial_key_buffer,
               uint8_t partial_key_len,
               const char *value_buffer,
-              uint8_t value_len);
+              uint8_t value_len,
+              NodePtr &cur_node);
 
   bool GetIfMatch(uint8_t key_compared,
                   const partial_key_t *key_buffer,
@@ -153,20 +153,12 @@ struct alignas(8) AdaptiveRadixTree::LeafNode {
   inline void GetHasPartialKey(std::string &value_buffer) const;
 };
 
-struct alignas(8)  AdaptiveRadixTree::Node4 {
-  NodePtr child_ptrs[4]{NodePtr()};
-  partial_key_t partial_key[4];
+class alignas(8) AdaptiveRadixTree::Node4 {
+ public:
 
-  struct {
-    uint8_t prefix_key_len;
-    union {
-      char prefix_key_buf10[10];
-      struct __attribute__((packed)) {
-        char prefix_key_buf4[4];
-        uint64_t __prefix_key_ptr_count: 56;
-      };
-    };
-  };
+  Node4() : __prefix_key_ptr_count(0), prefix_key_len(0) {}
+  Node4(const char *prefix_key_buf, uint8_t prefix_key_len);
+  ~Node4();
 
   inline void IncCount() {
     assert(GetCount() < 4);
@@ -194,6 +186,25 @@ struct alignas(8)  AdaptiveRadixTree::Node4 {
   }
 
   NodePtr FindChild(partial_key_t key_span);
+
+ private:
+#ifdef ART_BUILD_TESTS
+  friend void AdaptiveRadixTree::TEST_Layout();
+#endif
+
+  NodePtr child_ptrs[4]{NodePtr()};
+  partial_key_t partial_key[4];
+
+  struct {
+    uint8_t prefix_key_len;
+    union {
+      char prefix_key_buf10[10];
+      struct __attribute__((packed)) {
+        char prefix_key_buf4[4];
+        uint64_t __prefix_key_ptr_count: 56;
+      };
+    };
+  };
 };
 
 struct AdaptiveRadixTree::Node16 {
