@@ -7,6 +7,7 @@
 
 #include "art/art.h"
 #include "likely.h"
+#include "util.h"
 
 namespace ART_NAMESPACE {
 
@@ -64,30 +65,96 @@ AdaptiveRadixTree::NodePtr AdaptiveRadixTree::NodePtr::NewLeaf(const partial_key
   return AdaptiveRadixTree::NodePtr(leaf_node_ptr, NodeType::kLeafNode);
 }
 
-bool AdaptiveRadixTree::LeafNode::AssignIfMatch(uint8_t key_compared,
-                                                const partial_key_t *key_buffer,
-                                                uint8_t key_len,
-                                                std::string &value_buffer) {
+bool AdaptiveRadixTree::LeafNode::Insert(const partial_key_t *partial_key_buffer,
+                                         uint8_t partial_key_len,
+                                         const char *value_buffer,
+                                         uint8_t value_len) {
+  if (no_partial_key) {
+    if (partial_key_len == 0) {
+      // directly update value
+      UpdateNoPartialKey(value_buffer, value_len);
+      return true;
+    }
+  } else {
+    // TODO
+    if (IsInlineKey()) {
+      if (this->partial_key_len == partial_key_len) {
+        int mis_match_idx = MemCmpMismatch(key.buf, partial_key_buffer, partial_key_len);
+        if (mis_match_idx == partial_key_len) {
+          // these two partial_keys are equal.
+          UpdateHasPartialKey(value_buffer, value_len);
+          return true;
+        } else {
+
+        }
+      } else if (this->partial_key_len > partial_key_len) {
+
+      } else {
+
+      }
+
+    } else {
+
+    }
+  }
+  return false;
+}
+
+bool AdaptiveRadixTree::LeafNode::GetIfMatch(uint8_t key_compared,
+                                             const partial_key_t *key_buffer,
+                                             uint8_t key_len,
+                                             std::string &value_buffer) const {
   if (no_partial_key) {
     if (key_len == key_compared) {
-      GetValueNoPartialKey(value_buffer);
+      GetNoPartialKey(value_buffer);
       return true;
     }
   } else if (key_compared + partial_key_len == key_len) {
     if (IsInlineKey()) {
       if (memcmp(key.buf, key_buffer + key_compared, partial_key_len) == 0) {
-        AssignValueHasPartialKey(value_buffer);
+        GetHasPartialKey(value_buffer);
         return true;
       }
     } else if (memcmp(reinterpret_cast<void *>(key.ptr), key_buffer + key_compared, partial_key_len) == 0) {
-      AssignValueHasPartialKey(value_buffer);
+      GetHasPartialKey(value_buffer);
       return true;
     }
   }
   return false;
 }
 
-void AdaptiveRadixTree::LeafNode::GetValueNoPartialKey(std::string &value_buffer) {
+void AdaptiveRadixTree::LeafNode::UpdateNoPartialKey(const char *value_buffer, uint8_t value_len) {
+  if (this->value_len > 15) {
+    delete[] reinterpret_cast<char *>(value_ptr);
+  }
+
+  if (value_len <= 15) {
+    memcpy(value_buf15, value_buffer, value_len);
+  } else {
+    memcpy(value_buf8, value_buffer, 8);
+    char *new_value_ptr = new char[value_len - 8];
+    memcpy(new_value_ptr, value_buffer + 8, value_len - 8);
+    value_ptr = reinterpret_cast<uint64_t>(new_value_ptr);
+  }
+  this->value_len = value_len;
+}
+
+void AdaptiveRadixTree::LeafNode::UpdateHasPartialKey(const char *value_buffer, uint8_t value_len) {
+  if (this->value_len > 7) {
+    delete reinterpret_cast<char *>(value7.ptr);
+  }
+
+  if (value_len <= 7) {
+    memcpy(value7.buf, value_buffer, value_len);
+  } else {
+    char *new_value_ptr = new char[value_len];
+    memcpy(new_value_ptr, value_buffer, value_len);
+    value7.ptr = reinterpret_cast<uint64_t>(new_value_ptr);
+  }
+  this->value_len = value_len;
+}
+
+void AdaptiveRadixTree::LeafNode::GetNoPartialKey(std::string &value_buffer) const {
   if (value_len <= 15) {
     value_buffer.assign(value_buf15, value_len);
   } else {
@@ -96,7 +163,7 @@ void AdaptiveRadixTree::LeafNode::GetValueNoPartialKey(std::string &value_buffer
   }
 }
 
-inline void AdaptiveRadixTree::LeafNode::AssignValueHasPartialKey(std::string &value_buffer) {
+inline void AdaptiveRadixTree::LeafNode::GetHasPartialKey(std::string &value_buffer) const {
   value_buffer.assign(value_len <= 7 ? value7.buf : reinterpret_cast<char *>(value7.ptr), value_len);
 }
 
@@ -129,18 +196,32 @@ AdaptiveRadixTree::NodePtr AdaptiveRadixTree::Node256::FindChild(partial_key_t k
 
 AdaptiveRadixTree::AdaptiveRadixTree() : root_(NodePtr()), size_(0) {}
 
-bool AdaptiveRadixTree::Insert(const char *key_buffer,
+bool AdaptiveRadixTree::Insert(const partial_key_t *key_buffer,
                                uint8_t key_len,
                                const char *value_buffer,
-                               size_t value_len) {
+                               uint8_t value_len) {
   assert(key_len < 128);
   assert(value_len < 128);
 
   if (UNLIKELY(root_.IsNullptr())) {
     root_ = NodePtr::NewLeaf(key_buffer, key_len, value_buffer, value_len);
-    return true;
+    return false;
   }
 
+  NodePtr &cur_node = root_;
+
+  do {
+    switch (cur_node.GetNodeType()) {
+      case NodeType::kLeafNode: {
+        auto leaf_node = cur_node.ToLeafNode();
+        return leaf_node->Insert(key_buffer, key_len, value_buffer, value_len);
+      }
+      case NodeType::kNode4:break;
+      case NodeType::kNode16:break;
+      case NodeType::kNode48:break;
+      case NodeType::kNode256:break;
+    }
+  } while (!cur_node.IsNullptr());
   return false;
 }
 
@@ -160,7 +241,7 @@ bool AdaptiveRadixTree::Get(const char *key_buffer, uint8_t key_len, std::string
     switch (cur_node.GetNodeType()) {
       case NodeType::kLeafNode: {
         auto leaf_node = cur_node.ToLeafNode();
-        return leaf_node->AssignIfMatch(cur_key_depth, key_buffer, key_len, value_buffer);
+        return leaf_node->GetIfMatch(cur_key_depth, key_buffer, key_len, value_buffer);
       }
       case NodeType::kNode4: {
         auto *node4 = reinterpret_cast<Node4 *>(cur_node.GetPtr());
@@ -209,6 +290,8 @@ void AdaptiveRadixTree::TEST_Layout() {
   for (int i = 8; i < 15; ++i) {
     assert(leaf_node.value_buf15[i] == -1);
   }
+  leaf_node.value_ptr = 0x00ffffffffffff00;
+  assert(leaf_node.value_buf15[8] == 0);
 
   static_assert(sizeof(Node4) == 48);
   static_assert(alignof(Node4) >= kMinAlignment);

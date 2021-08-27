@@ -17,7 +17,7 @@ TEST(ARTNodeTest, Get1) {
   std::string buf;
   ASSERT_FALSE(art.Get("hello", 5, buf));
   ASSERT_TRUE(buf.empty());
-  ASSERT_TRUE(art.Insert("hello", 5, "", 0));
+  ASSERT_FALSE(art.Insert("hello", 5, "", 0));
   ASSERT_TRUE(art.Get("hello", 5, buf));
   ASSERT_TRUE(buf.empty());
 }
@@ -27,9 +27,12 @@ TEST(ARTNodeTest, Get2) {
   std::string buf;
   ASSERT_FALSE(art.Get("hello", 5, buf));
   ASSERT_TRUE(buf.empty());
-  ASSERT_TRUE(art.Insert("hello", 5, "xxx", 3));
+  ASSERT_FALSE(art.Insert("hello", 5, "xxx", 3));
   ASSERT_TRUE(art.Get("hello", 5, buf));
   ASSERT_EQ(buf.size(), 3);
+  ASSERT_TRUE(art.Insert("hello", 5, "yyyy", 4));
+  ASSERT_TRUE(art.Get("hello", 5, buf));
+  ASSERT_EQ(buf.size(), 4);
 }
 
 }

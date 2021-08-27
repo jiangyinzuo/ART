@@ -81,7 +81,7 @@ class AdaptiveRadixTree {
   AdaptiveRadixTree();
   ~AdaptiveRadixTree();
 
-  bool Insert(const partial_key_t *key_buffer, uint8_t key_len, const char *value_buffer, size_t value_len);
+  bool Insert(const partial_key_t *key_buffer, uint8_t key_len, const char *value_buffer, uint8_t value_len);
   bool Get(const partial_key_t *key_buffer, uint8_t key_len, std::string &value_buffer) const;
   bool Delete(const partial_key_t *key_buffer, size_t key_len);
 
@@ -106,7 +106,6 @@ struct alignas(8) AdaptiveRadixTree::LeafNode {
 
   // header
   uint8_t no_partial_key: 1;
-
   uint8_t value_len: 7;
 
   union __attribute__((packed)) {
@@ -130,17 +129,28 @@ struct alignas(8) AdaptiveRadixTree::LeafNode {
     };
   };
 
-  bool AssignIfMatch(uint8_t key_compared,
-                     const partial_key_t *key_buffer,
-                     uint8_t key_len,
-                     std::string &value_buffer);
+  // Return true if there already exists partial_key.
+  bool Insert(const partial_key_t *partial_key_buffer,
+              uint8_t partial_key_len,
+              const char *value_buffer,
+              uint8_t value_len);
+
+  bool GetIfMatch(uint8_t key_compared,
+                  const partial_key_t *key_buffer,
+                  uint8_t key_len,
+                  std::string &value_buffer) const;
  private:
   inline bool IsInlineKey() const {
     return partial_key_len <= 7;
   }
 
-  void GetValueNoPartialKey(std::string &value_buffer);
-  inline void AssignValueHasPartialKey(std::string &value_buffer);
+  void UpdateNoPartialKey(const char *value_buffer,
+                          uint8_t value_len);
+  void UpdateHasPartialKey(const char *value_buffer,
+                           uint8_t value_len);
+
+  void GetNoPartialKey(std::string &value_buffer) const;
+  inline void GetHasPartialKey(std::string &value_buffer) const;
 };
 
 struct alignas(8)  AdaptiveRadixTree::Node4 {
