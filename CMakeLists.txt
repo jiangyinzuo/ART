@@ -25,14 +25,14 @@ target_include_directories(${PROJECT_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/in
 option(CODE_COVERAGE "Enable coverage reporting" OFF)
 if (CODE_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     # Add required flags (GCC & LLVM/Clang)
-    target_compile_options(coverage_config INTERFACE
+    target_compile_options(${PROJECT_NAME} INTERFACE
             -O0        # no optimization
             -g         # generate debug info
             --coverage # sets all required flags
             )
     if (CMAKE_VERSION VERSION_GREATER_EQUAL 3.13)
-        target_link_options(coverage_config INTERFACE --coverage)
+        target_link_options(${PROJECT_NAME} INTERFACE --coverage)
     else ()
-        target_link_libraries(coverage_config INTERFACE --coverage)
+        target_link_libraries(${PROJECT_NAME} INTERFACE --coverage)
     endif ()
 endif (CODE_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
