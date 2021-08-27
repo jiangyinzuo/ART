@@ -24,15 +24,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/in
 # Reference: https://github.com/codecov/example-cpp11-cmake/blob/master/CMakeLists.txt
 option(CODE_COVERAGE "Enable coverage reporting" OFF)
 if (CODE_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    # Add required flags (GCC & LLVM/Clang)
-    target_compile_options(${PROJECT_NAME} INTERFACE
-            -O0        # no optimization
-            -g         # generate debug info
-            --coverage # sets all required flags
-            )
-    if (CMAKE_VERSION VERSION_GREATER_EQUAL 3.13)
-        target_link_options(${PROJECT_NAME} INTERFACE --coverage)
-    else ()
-        target_link_libraries(${PROJECT_NAME} INTERFACE --coverage)
-    endif ()
+    SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g -O0 -fprofile-arcs -ftest-coverage")
+    SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O0 -fprofile-arcs -ftest-coverage")
+    target_link_libraries(${PROJECT_NAME} gcov)
 endif (CODE_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
