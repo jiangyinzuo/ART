@@ -26,18 +26,19 @@ jobs:
       - run: apt-get -y update &&
           apt-get -y install cmake
       - checkout
-      - run: cmake .. -DCMAKE_C_COMPILER=/usr/bin/gcc-10 -DCMAKE_CXX_COMPILER=/usr/bin/g++-10
+      - run: |
+        cmake .. -DCMAKE_C_COMPILER=/usr/bin/gcc-10 -DCMAKE_CXX_COMPILER=/usr/bin/g++-10
           -DCODE_COVERAGE=ON -DCMAKE_BUILD_TYPE=Debug
-      - run: make -j 2
-      - run: cd test && ctest -V
-      # Create lcov report
-      # capture coverage info
-      - run: lcov --directory . --capture --output-file coverage.info
-      # filter out system and extra files.
-      # To also not include test code in coverage add them with full path to the patterns: '*/tests/*'
-      - run: lcov --remove coverage.info '/usr/*' "${HOME}"'/.cache/*' --output-file coverage.info
-      # output coverage data for debugging (optional)
-      - run: lcov --list coverage.info
+        make -j 2
+        cd test && ctest -V && cd ..
+        # Create lcov report
+        # capture coverage info
+        lcov --directory . --capture --output-file coverage.info
+        # filter out system and extra files.
+        # To also not include test code in coverage add them with full path to the patterns: '*/tests/*'
+        lcov --remove coverage.info '/usr/*' "${HOME}"'/.cache/*' --output-file coverage.info
+        # output coverage data for debugging (optional)
+        lcov --list coverage.info
       - codecov/upload
 
 # Orchestrate or schedule a set of jobs
