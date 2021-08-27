@@ -36,10 +36,11 @@ class AdaptiveRadixTree {
   struct NodePtr {
 
     static NodePtr NewLeaf(const char *value_buf, uint8_t value_len);
-    static NodePtr NewLeafWithPrefixKey(const char *prefix_key_buf,
-                                        uint8_t key_len,
-                                        const char *value_buf,
-                                        uint8_t value_len);
+    static NodePtr NewLeaf(const char *prefix_key_buf,
+                           uint8_t prefix_key_len,
+                           const char *value_buf,
+                           uint8_t value_len);
+
     NodePtr() : bits_(0) {}
 
     NodePtr(void *ptr, NodeType tp) : bits_(
@@ -49,6 +50,11 @@ class AdaptiveRadixTree {
 
     inline void *GetPtr() const {
       return reinterpret_cast<void *>(bits_ & (UINT64_MAX - kNodeTypeMask));
+    }
+
+    inline LeafNode *ToLeafNode() const {
+      assert(GetNodeType() == NodeType::kLeafNode);
+      return reinterpret_cast<LeafNode *>(bits_);
     }
 
     inline NodeType GetNodeType() const {
@@ -66,8 +72,6 @@ class AdaptiveRadixTree {
     }
 
     inline bool IsNullptr() const { return bits_ == 0; }
-
-    bool LeafMatch(uint8_t cur_key_depth, const partial_key_t *key_buffer, uint8_t key_len, std::string &value_buffer);
 
    private:
     uint64_t bits_;
@@ -101,19 +105,21 @@ union __attribute__((packed)) BufOrPtr7Bytes {
 struct alignas(8) AdaptiveRadixTree::LeafNode {
 
   // header
-  uint8_t no_key: 1;
-  uint8_t is_inline_key: 1;
-  uint8_t is_inline_value: 1;
-  uint8_t inline_value_len: 5;
+  uint8_t no_partial_key: 1;
 
-  union __attribute__((packed)) Data {
-    struct __attribute__((packed)) HasPrefixKeyLayout {
+  uint8_t value_len: 7;
+
+  union __attribute__((packed)) {
+
+    // has partial key
+    struct __attribute__((packed)) {
       BufOrPtr7Bytes key;
-      uint8_t key_len;
-      BufOrPtr7Bytes value;
-    } has_prefix_key_layout;
+      uint8_t partial_key_len;
+      BufOrPtr7Bytes value7;
+    };
 
-    struct NoPrefixKeyLayout {
+    // no partial key
+    struct {
       union {
         char value_buf15[15];
         struct __attribute__((packed)) {
@@ -121,20 +127,34 @@ struct alignas(8) AdaptiveRadixTree::LeafNode {
           uint64_t value_ptr: 56;
         };
       };
-    } no_prefix_key_layout;
-  } data;
+    };
+  };
+
+  bool AssignIfMatch(uint8_t key_compared,
+                     const partial_key_t *key_buffer,
+                     uint8_t key_len,
+                     std::string &value_buffer);
+ private:
+  inline bool IsInlineKey() const {
+    return partial_key_len <= 7;
+  }
+
+  void GetValueNoPartialKey(std::string &value_buffer);
+  inline void AssignValueHasPartialKey(std::string &value_buffer);
 };
 
 struct alignas(8)  AdaptiveRadixTree::Node4 {
   NodePtr child_ptrs[4]{NodePtr()};
+  partial_key_t partial_key[4];
 
   struct {
-    uint8_t prefix_key_is_buf: 1;
-    uint8_t prefix_key_len: 7;
-
-    union __attribute__((packed)) {
-      char prefix_key_buf[6];
-      uint64_t __prefix_key_ptr_count: 56;
+    uint8_t prefix_key_len;
+    union {
+      char prefix_key_buf10[10];
+      struct __attribute__((packed)) {
+        char prefix_key_buf4[4];
+        uint64_t __prefix_key_ptr_count: 56;
+      };
     };
   };
 
@@ -171,15 +191,14 @@ struct AdaptiveRadixTree::Node16 {
   alignas(16) partial_key_t partial_key[16];
   NodePtr child_ptrs[16]{NodePtr()};
   struct {
-    uint8_t is_buf: 1;
-    uint8_t len: 7;
+    uint8_t len;
 
     union __attribute__((packed)) {
       struct __attribute__((packed)) {
-        char buf7[7];
+        partial_key_t buf7[7];
         uint64_t ptr: 56;
       };
-      char buf14[14];
+      partial_key_t buf14[14];
     };
   } prefix_key;
   uint8_t count;
@@ -192,8 +211,7 @@ struct AdaptiveRadixTree::Node48 {
   NodePtr child_ptrs[48]{NodePtr()};
   uint64_t bitmap;
   struct {
-    uint8_t key_is_buf: 1;
-    uint8_t key_len: 7;
+    uint8_t key_len;
     BufOrPtr7Bytes key;
   };
 
@@ -204,8 +222,7 @@ struct AdaptiveRadixTree::Node256 {
   NodePtr child_ptrs[256]{NodePtr()};
 
   struct {
-    uint8_t key_is_buf: 1;
-    uint8_t key_len: 7;
+    uint8_t key_len;
     BufOrPtr7Bytes key;
   };
 

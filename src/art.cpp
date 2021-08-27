@@ -12,58 +12,100 @@ namespace ART_NAMESPACE {
 
 AdaptiveRadixTree::NodePtr AdaptiveRadixTree::NodePtr::NewLeaf(const char *value_buf, uint8_t value_len) {
   assert(value_len < 128);
-//  auto *leaf_node_ptr = reinterpret_cast<LeafNode *>(malloc(static_cast<size_t>(value_len) + 1));
-//  leaf_node_ptr->has_prefix_key = false;
-//  leaf_node_ptr->value_len = value_len;
-//  memcpy(leaf_node_ptr->value_buffer, value_buf, value_len);
-//  return AdaptiveRadixTree::NodePtr(leaf_node_ptr, NodeType::kLeafNode);
-  return AdaptiveRadixTree::NodePtr();
+  auto *leaf_node_ptr = new LeafNode;
+  leaf_node_ptr->no_partial_key = true;
+
+  leaf_node_ptr->value_len = value_len;
+  if (value_len <= 15) {
+    // inline value
+    memcpy(leaf_node_ptr->value_buf15, value_buf, value_len);
+  } else {
+    memcpy(leaf_node_ptr->value_buf8, value_buf, 8);
+    char *value_ptr = new char[value_len - 8];
+    memcpy(value_ptr, value_buf + 8, value_len - 8);
+    leaf_node_ptr->value_ptr = reinterpret_cast<uint64_t>(value_ptr);
+  }
+
+  return AdaptiveRadixTree::NodePtr(leaf_node_ptr, NodeType::kLeafNode);
 }
 
-AdaptiveRadixTree::NodePtr AdaptiveRadixTree::NodePtr::NewLeafWithPrefixKey(const char *prefix_key_buf,
-                                                                            uint8_t key_len,
-                                                                            const char *value_buf,
-                                                                            uint8_t value_len) {
+AdaptiveRadixTree::NodePtr AdaptiveRadixTree::NodePtr::NewLeaf(const partial_key_t *prefix_key_buf,
+                                                               uint8_t prefix_key_len,
+                                                               const char *value_buf,
+                                                               uint8_t value_len) {
+  assert(prefix_key_len < 128);
   assert(value_len < 128);
-//  auto *leaf_node_ptr = reinterpret_cast<LeafNode *>(malloc(
-//      static_cast<size_t>(key_len) +
-//          static_cast<size_t>(value_len) + 2));
-//  leaf_node_ptr->has_prefix_key = true;
-//  leaf_node_ptr->key_len = key_len;
-//  leaf_node_ptr->value_len = value_len;
-//  memcpy(leaf_node_ptr->key_value_buffer, prefix_key_buf, key_len);
-//  memcpy(leaf_node_ptr->key_value_buffer + key_len, value_buf, value_len);
-  return AdaptiveRadixTree::NodePtr();
+  auto *leaf_node_ptr = new LeafNode;
+
+  // initialize key
+  leaf_node_ptr->no_partial_key = false;
+  leaf_node_ptr->partial_key_len = prefix_key_len;
+  if (prefix_key_len <= 7) {
+    memcpy(leaf_node_ptr->key.buf, prefix_key_buf, prefix_key_len);
+  } else {
+    auto *key_ptr = new partial_key_t[prefix_key_len];
+    assert((reinterpret_cast<uint64_t>(key_ptr) && 0xff00000000000000) == 0);
+    memcpy(key_ptr, prefix_key_buf, prefix_key_len);
+    leaf_node_ptr->key.ptr = reinterpret_cast<uint64_t>(key_ptr);
+  }
+
+  // initialize value
+  leaf_node_ptr->value_len = value_len;
+  if (value_len <= 7) {
+    // inline value
+    memcpy(leaf_node_ptr->value7.buf, value_buf, value_len);
+  } else {
+    auto *value_ptr = new char[value_len];
+    assert((reinterpret_cast<uint64_t>(value_ptr) && 0xff00000000000000) == 0);
+    memcpy(value_ptr, value_buf, value_len);
+    leaf_node_ptr->value7.ptr = reinterpret_cast<uint64_t>(value_ptr);
+  }
+
+  return AdaptiveRadixTree::NodePtr(leaf_node_ptr, NodeType::kLeafNode);
 }
 
-bool AdaptiveRadixTree::NodePtr::LeafMatch(uint8_t cur_key_depth,
-                                           const char *key_buffer,
-                                           uint8_t key_len,
-                                           std::string &value_buffer) {
-  assert(GetNodeType() == NodeType::kLeafNode);
-
-//  auto leaf_node = reinterpret_cast<LeafNode *>(bits_);
-//  if (leaf_node->has_prefix_key) {
-//    if (leaf_node->key_len == key_len - cur_key_depth
-//        && memcmp(leaf_node->key_value_buffer, key_buffer + cur_key_depth, leaf_node->key_len) == 0) {
-//      auto *leaf_value_start = reinterpret_cast<uint64_t *>(leaf_partial_key_start + length);
-//      char *value_ptr = reinterpret_cast<char *>(leaf_node->key_value_buffer);
-//      value_buffer.assign(value_ptr);
-//      return true;
-//    }
-//  } else if (key_len - cur_key_depth == 0) {
-//    value_buffer.assign(leaf_node->value_buffer, leaf_node->value_len);
-//    return true;
-//  }
+bool AdaptiveRadixTree::LeafNode::AssignIfMatch(uint8_t key_compared,
+                                                const partial_key_t *key_buffer,
+                                                uint8_t key_len,
+                                                std::string &value_buffer) {
+  if (no_partial_key) {
+    if (key_len == key_compared) {
+      GetValueNoPartialKey(value_buffer);
+      return true;
+    }
+  } else if (key_compared + partial_key_len == key_len) {
+    if (IsInlineKey()) {
+      if (memcmp(key.buf, key_buffer + key_compared, partial_key_len) == 0) {
+        AssignValueHasPartialKey(value_buffer);
+        return true;
+      }
+    } else if (memcmp(reinterpret_cast<void *>(key.ptr), key_buffer + key_compared, partial_key_len) == 0) {
+      AssignValueHasPartialKey(value_buffer);
+      return true;
+    }
+  }
   return false;
 }
 
+void AdaptiveRadixTree::LeafNode::GetValueNoPartialKey(std::string &value_buffer) {
+  if (value_len <= 15) {
+    value_buffer.assign(value_buf15, value_len);
+  } else {
+    value_buffer.assign(value_buf8, 8);
+    value_buffer.append(reinterpret_cast<char *>(value_ptr), value_len - 8);
+  }
+}
+
+inline void AdaptiveRadixTree::LeafNode::AssignValueHasPartialKey(std::string &value_buffer) {
+  value_buffer.assign(value_len <= 7 ? value7.buf : reinterpret_cast<char *>(value7.ptr), value_len);
+}
+
 AdaptiveRadixTree::NodePtr AdaptiveRadixTree::Node4::FindChild(partial_key_t key_span) {
-//  for (int i = 0; i < count; ++i) {
-//    if (partial_key[i] == key_span) {
-//      return NodePtr{child_ptrs[i]};
-//    }
-//  }
+  for (int i = 0; i < GetCount(); ++i) {
+    if (partial_key[i] == key_span) {
+      return NodePtr{child_ptrs[i]};
+    }
+  }
   return AdaptiveRadixTree::NodePtr();
 }
 
@@ -91,8 +133,9 @@ bool AdaptiveRadixTree::Insert(const char *key_buffer,
                                uint8_t key_len,
                                const char *value_buffer,
                                size_t value_len) {
+  assert(value_len < 128);
   if (UNLIKELY(root_.IsNullptr())) {
-    root_ = NodePtr::NewLeafWithPrefixKey(key_buffer, key_len, value_buffer, value_len);
+    root_ = NodePtr::NewLeaf(key_buffer, key_len, value_buffer, value_len);
     return true;
   }
 
@@ -109,7 +152,10 @@ bool AdaptiveRadixTree::Get(const char *key_buffer, uint8_t key_len, std::string
   size_t cur_key_depth = 0;
   while (!cur_node.IsNullptr() && cur_key_depth < key_len) {
     switch (cur_node.GetNodeType()) {
-      case NodeType::kLeafNode:return cur_node.LeafMatch(cur_key_depth, key_buffer, key_len, value_buffer);
+      case NodeType::kLeafNode: {
+        auto leaf_node = cur_node.ToLeafNode();
+        return leaf_node->AssignIfMatch(cur_key_depth, key_buffer, key_len, value_buffer);
+      }
       case NodeType::kNode4: {
         auto *node4 = reinterpret_cast<Node4 *>(cur_node.GetPtr());
         cur_node = node4->FindChild(key_buffer[cur_key_depth]);
@@ -145,22 +191,20 @@ bool AdaptiveRadixTree::Delete(const char *key_buffer, size_t key_len) {
 void AdaptiveRadixTree::TEST_Layout() {
 
   static_assert(sizeof(LeafNode) == 16);
-  static_assert(sizeof(LeafNode::Data::HasPrefixKeyLayout) == 15);
-  static_assert(sizeof(LeafNode::Data::NoPrefixKeyLayout) == 15);
   LeafNode leaf_node{};
-  leaf_node.data.has_prefix_key_layout.key.ptr = 0xffffffffffffff;
+  leaf_node.key.ptr = 0xffffffffffffff;
   for (int i = 0; i < 7; ++i) {
-    assert(leaf_node.data.has_prefix_key_layout.key.buf[i] == -1);
-    assert(leaf_node.data.no_prefix_key_layout.value_buf8[i] == -1);
-    assert(leaf_node.data.no_prefix_key_layout.value_buf15[i] == -1);
+    assert(leaf_node.key.buf[i] == -1);
+    assert(leaf_node.value_buf8[i] == -1);
+    assert(leaf_node.value_buf15[i] == -1);
   }
-  assert(leaf_node.data.no_prefix_key_layout.value_buf8[7] == 0);
-  leaf_node.data.no_prefix_key_layout.value_ptr = 0xffffffffffffff;
+  assert(leaf_node.value_buf8[7] == 0);
+  leaf_node.value_ptr = 0xffffffffffffff;
   for (int i = 8; i < 15; ++i) {
-    assert(leaf_node.data.no_prefix_key_layout.value_buf15[i] == -1);
+    assert(leaf_node.value_buf15[i] == -1);
   }
-  
-  static_assert(sizeof(Node4) == 40);
+
+  static_assert(sizeof(Node4) == 48);
   static_assert(alignof(Node4) >= kMinAlignment);
   char *ptr = new char[10];
   Node4 node_4;
@@ -170,7 +214,6 @@ void AdaptiveRadixTree::TEST_Layout() {
   node_4.IncCount();
   assert(node_4.GetCount() == 1);
   node_4.IncCount();
-  node_4.prefix_key_is_buf = true;
   node_4.prefix_key_len = 23;
   assert(node_4.GetCount() == 2);
   node_4.DecCount();
@@ -192,10 +235,8 @@ void AdaptiveRadixTree::TEST_Layout() {
   static_assert(sizeof(Node48) == 256 + 48 * 8 + 8 + 8);
   Node48 node_48;
   node_48.key_len = 0;
-  node_48.key_is_buf = 0;
   node_48.key.ptr = 0xffffffffffffff;
   node_48.key_len = 0;
-  node_48.key_is_buf = 0;
   for (char i: node_48.key.buf) {
     assert(i == -1);
   }
@@ -203,10 +244,8 @@ void AdaptiveRadixTree::TEST_Layout() {
   static_assert(sizeof(Node256) == 256 * 8 + 8);
   Node256 node_256;
   node_256.key_len = 0;
-  node_256.key_is_buf = 0;
   node_256.key.ptr = 0xffffffffffffff;
   node_256.key_len = 0;
-  node_256.key_is_buf = 0;
   for (char i: node_48.key.buf) {
     assert(i == -1);
   }
