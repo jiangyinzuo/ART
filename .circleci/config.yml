@@ -24,10 +24,11 @@ jobs:
       - run: |
           mkdir build && cd build
           cmake .. -DCMAKE_C_COMPILER=/usr/bin/gcc-10 -DCMAKE_CXX_COMPILER=/usr/bin/g++-10 -DCODE_COVERAGE=ON -DCMAKE_BUILD_TYPE=Debug
-          cmake --build --config Debug -- -j 2
+          cmake --build . --config Debug -- -j 2
           cd test && ctest -V
           # Create lcov report
           # capture coverage info
+          cd ../..
           lcov --directory . --capture --output-file coverage.info
           # filter out system and extra files.
           # To also not include test code in coverage add them with full path to the patterns: '*/tests/*'
