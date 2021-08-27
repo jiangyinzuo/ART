@@ -27,8 +27,7 @@ jobs:
           apt-get -y install cmake
       - checkout
       - run: |
-        cmake .. -DCMAKE_C_COMPILER=/usr/bin/gcc-10 -DCMAKE_CXX_COMPILER=/usr/bin/g++-10
-          -DCODE_COVERAGE=ON -DCMAKE_BUILD_TYPE=Debug
+        cmake .. -DCMAKE_C_COMPILER=/usr/bin/gcc-10 -DCMAKE_CXX_COMPILER=/usr/bin/g++-10 -DCODE_COVERAGE=ON -DCMAKE_BUILD_TYPE=Debug
         make -j 2
         cd test && ctest -V && cd ..
         # Create lcov report
