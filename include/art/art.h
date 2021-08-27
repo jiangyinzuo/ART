@@ -18,9 +18,6 @@ using partial_key_t = char;
 class AdaptiveRadixTree {
  private:
   enum class NodeType {
-    // | length | partial key |
-    // +--------+-------------+
-    // | 1byte  |    var len  |
     kLeafNode = 0,
     kNode4 = 1,
     kNode16 = 2,
@@ -28,8 +25,8 @@ class AdaptiveRadixTree {
     kNode256 = 4,
   };
 
-  struct LeafNode;
-  struct Node4;
+  struct alignas(8) LeafNode;
+  struct alignas(8) Node4;
   struct Node16;
   struct Node48;
   struct Node256;
@@ -38,8 +35,11 @@ class AdaptiveRadixTree {
   // Pointer MUST be aligned with at least 8 bytes (remaining 3 bits for NodeType).
   struct NodePtr {
 
-    static NodePtr NewLeaf(const char *buf, uint8_t len);
-
+    static NodePtr NewLeaf(const char *value_buf, uint8_t value_len);
+    static NodePtr NewLeafWithPrefixKey(const char *prefix_key_buf,
+                                        uint8_t key_len,
+                                        const char *value_buf,
+                                        uint8_t value_len);
     NodePtr() : bits_(0) {}
 
     NodePtr(void *ptr, NodeType tp) : bits_(
@@ -84,7 +84,7 @@ class AdaptiveRadixTree {
   inline size_t GetSize() const { return size_; }
 
 #ifdef ART_BUILD_TESTS
-  static void TEST_NodePtr();
+  static void TEST_Layout();
 #endif
 
  private:
@@ -92,25 +92,76 @@ class AdaptiveRadixTree {
   size_t size_;
 };
 
-// lazy expansion: partial key may be stored in leaf node
-struct AdaptiveRadixTree::LeafNode {
-  uint32_t tag: 1;
-  uint32_t value_size: 31;
-  union {
-    struct {
-      uint8_t key_size;
-      char key_value_buffer[0];
-    };
-    char value_buffer[0];
-  };
+union __attribute__((packed)) BufOrPtr7Bytes {
+  char buf[7];
+  uint64_t ptr: 56;
 };
 
-struct AdaptiveRadixTree::Node4 {
+// lazy expansion: partial key may be stored in leaf node
+struct alignas(8) AdaptiveRadixTree::LeafNode {
+
+  // header
+  uint8_t no_key: 1;
+  uint8_t is_inline_key: 1;
+  uint8_t is_inline_value: 1;
+  uint8_t inline_value_len: 5;
+
+  union __attribute__((packed)) Data {
+    struct __attribute__((packed)) HasPrefixKeyLayout {
+      BufOrPtr7Bytes key;
+      uint8_t key_len;
+      BufOrPtr7Bytes value;
+    } has_prefix_key_layout;
+
+    struct NoPrefixKeyLayout {
+      union {
+        char value_buf15[15];
+        struct __attribute__((packed)) {
+          char value_buf8[8];
+          uint64_t value_ptr: 56;
+        };
+      };
+    } no_prefix_key_layout;
+  } data;
+};
+
+struct alignas(8)  AdaptiveRadixTree::Node4 {
   NodePtr child_ptrs[4]{NodePtr()};
-  partial_key_t partial_key[4];
-  uint8_t count;
-  uint8_t prefix_key_len;
-  partial_key_t prefix_key[0];
+
+  struct {
+    uint8_t prefix_key_is_buf: 1;
+    uint8_t prefix_key_len: 7;
+
+    union __attribute__((packed)) {
+      char prefix_key_buf[6];
+      uint64_t __prefix_key_ptr_count: 56;
+    };
+  };
+
+  inline void IncCount() {
+    assert(GetCount() < 4);
+    ++__prefix_key_ptr_count;
+  }
+
+  inline void DecCount() {
+    assert(GetCount() > 0);
+    --__prefix_key_ptr_count;
+  }
+
+  inline uint8_t GetCount() const {
+    return __prefix_key_ptr_count & 0b111;
+  }
+
+  inline char *GetPrefixKeyPtr() const {
+    return reinterpret_cast<char *>(__prefix_key_ptr_count & (UINT64_MAX ^ 0b111));
+  }
+
+  inline void SetPrefixKeyPtr(const char *prefix_key_ptr) {
+    auto n = reinterpret_cast<uint64_t>(prefix_key_ptr);
+
+    assert((n & 0xff00000000000007) == 0);
+    __prefix_key_ptr_count = n | GetCount();
+  }
 
   NodePtr FindChild(partial_key_t key_span);
 };
@@ -119,9 +170,19 @@ struct AdaptiveRadixTree::Node16 {
   // SSE2 comparison
   alignas(16) partial_key_t partial_key[16];
   NodePtr child_ptrs[16]{NodePtr()};
+  struct {
+    uint8_t is_buf: 1;
+    uint8_t len: 7;
+
+    union __attribute__((packed)) {
+      struct __attribute__((packed)) {
+        char buf7[7];
+        uint64_t ptr: 56;
+      };
+      char buf14[14];
+    };
+  } prefix_key;
   uint8_t count;
-  uint8_t prefix_key_len;
-  partial_key_t prefix_key[0];
 
   NodePtr FindChild(partial_key_t key_span);
 };
@@ -129,17 +190,24 @@ struct AdaptiveRadixTree::Node16 {
 struct AdaptiveRadixTree::Node48 {
   uint8_t child_indexes[256];
   NodePtr child_ptrs[48]{NodePtr()};
-  uint8_t count;
-  uint8_t prefix_key_len;
-  partial_key_t prefix_key[0];
+  uint64_t bitmap;
+  struct {
+    uint8_t key_is_buf: 1;
+    uint8_t key_len: 7;
+    BufOrPtr7Bytes key;
+  };
 
   NodePtr FindChild(partial_key_t key_span);
 };
 
 struct AdaptiveRadixTree::Node256 {
   NodePtr child_ptrs[256]{NodePtr()};
-  uint8_t prefix_key_len;
-  partial_key_t prefix_key[0];
+
+  struct {
+    uint8_t key_is_buf: 1;
+    uint8_t key_len: 7;
+    BufOrPtr7Bytes key;
+  };
 
   NodePtr FindChild(partial_key_t key_span);
 };

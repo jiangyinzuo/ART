@@ -8,14 +8,17 @@ using namespace ART_NAMESPACE;
 
 namespace {
 
-TEST(ARTNodeTest, NodePtr) {
-  AdaptiveRadixTree::TEST_NodePtr();
+TEST(ARTNodeTest, Layout) {
+  AdaptiveRadixTree::TEST_Layout();
 }
 
 TEST(ARTNodeTest, Get) {
   AdaptiveRadixTree art;
   std::string buf;
   ASSERT_FALSE(art.Get("hello", 5, buf));
+  ASSERT_TRUE(buf.empty());
+  ASSERT_TRUE(art.Insert("hello", 5, "", 0));
+  ASSERT_TRUE(art.Get("hello", 5, buf));
   ASSERT_TRUE(buf.empty());
 }
 
