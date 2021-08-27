@@ -133,7 +133,9 @@ bool AdaptiveRadixTree::Insert(const char *key_buffer,
                                uint8_t key_len,
                                const char *value_buffer,
                                size_t value_len) {
+  assert(key_len < 128);
   assert(value_len < 128);
+
   if (UNLIKELY(root_.IsNullptr())) {
     root_ = NodePtr::NewLeaf(key_buffer, key_len, value_buffer, value_len);
     return true;
@@ -148,6 +150,10 @@ AdaptiveRadixTree::~AdaptiveRadixTree() {
 
 bool AdaptiveRadixTree::Get(const char *key_buffer, uint8_t key_len, std::string &value_buffer) const {
   assert(key_len > 0);
+  if (UNLIKELY(key_len >= 128)) {
+    return false;
+  }
+
   NodePtr cur_node = root_;
   size_t cur_key_depth = 0;
   while (!cur_node.IsNullptr() && cur_key_depth < key_len) {

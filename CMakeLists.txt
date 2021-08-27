@@ -5,6 +5,8 @@ set(CMAKE_CXX_STANDARD 20)
 
 set(ART_BUILD_TESTS "Build ${PROJECT_NAME}'s unit tests" ON)
 
+set(GIT_REPO_PREFIX "https://github.com" CACHE STRING "git repository url prefix")
+
 if (ART_BUILD_TESTS)
     add_definitions(-D ART_BUILD_TESTS)
     add_subdirectory(test)
