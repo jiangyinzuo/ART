@@ -1,7 +1,5 @@
 // Copyright (c) 2021, Jiang Yinzuo. All rights reserved.
 
-#include <cassert>
-#include <cstring>
 #include <emmintrin.h>
 #include <immintrin.h>
 
@@ -9,6 +7,11 @@
 #include "util.h"
 
 namespace ART_NAMESPACE {
+
+size_t KeyBuf::CmpMismatch(const char *buffer, size_t n) {
+  n = std::min(static_cast<size_t>(len), n);
+  return MemCmpMismatch(GetAddr(), buffer, n);
+}
 
 BufOrPtr::BufOrPtr(const char *ptr, uint8_t len) : len(len) {
   if (len <= 7) {
@@ -18,15 +21,6 @@ BufOrPtr::BufOrPtr(const char *ptr, uint8_t len) : len(len) {
     memcpy(new_ptr, ptr, len);
     this->ptr = reinterpret_cast<uint64_t>(new_ptr);
   }
-}
-
-bool BufOrPtr::IsEqualTo(const char *buffer, size_t n) const {
-  return n == len && memcmp(len <= 7 ? buf : reinterpret_cast<char *>(ptr), buffer, n) == 0;
-}
-
-size_t BufOrPtr::CmpMismatch(const char *buffer, size_t n) {
-  n = std::min(static_cast<size_t>(len), n);
-  return MemCmpMismatch(len <= 7 ? buf : reinterpret_cast<char *>(ptr), buffer, n);
 }
 
 void BufOrPtr::Assign(const char *buffer, size_t n) {
@@ -48,18 +42,30 @@ void BufOrPtr::CopyToBuffer(std::string &buffer) const {
   buffer.assign(addr, len);
 }
 
+BufOrPtr NodePtr::ToBufOrPtr() const {
+  BufOrPtr res = BufOrPtr();
+  res.len = len;
+  if (len <= 7) {
+    memcpy(res.buf, buf, len);
+  } else {
+    res.ptr = (uint64_t) GetValuePtr();
+  }
+  return res;
+}
+
 LeafNodeWithPrefixKey::LeafNodeWithPrefixKey(const partial_key_t *prefix_key_buf,
                                              uint8_t prefix_key_len,
                                              const char *value_buf,
-                                             uint8_t value_len, BufOrPtr prefix_value) : key(prefix_key_buf,
-                                                                                             prefix_key_len),
-                                                                                         prefix_value(prefix_value),
-                                                                                         value(value_buf, value_len) {}
+                                             uint8_t value_len, BufOrPtr prefix_value) : LeafNodeWithPrefixKey(
+    prefix_key_buf,
+    prefix_key_len,
+    BufOrPtr(value_buf, value_len),
+    prefix_value) {}
 
 LeafNodeWithPrefixKey::LeafNodeWithPrefixKey(const partial_key_t *prefix_key_buf,
                                              uint8_t prefix_key_len,
                                              BufOrPtr value, BufOrPtr prefix_value)
-    : key(prefix_key_buf, prefix_key_len),
+    : key(prefix_key_buf, prefix_key_len, true),
       prefix_value(prefix_value),
       value(value) {}
 
@@ -82,34 +88,20 @@ bool LeafNodeWithPrefixKey::GetIfMatch(
   return res;
 }
 
+Node4WithPrefixKey *Node4WithPrefixKey::NewInline(const char *prefix_key_buf, uint8_t prefix_key_len, BufOrPtr value) {
+  void *ptr = malloc(sizeof(Node4WithPrefixKey) + prefix_key_len);
+  auto node = new(ptr)Node4WithPrefixKey(prefix_key_buf, prefix_key_len, value);
+  return node;
+}
+
 Node4WithPrefixKey::Node4WithPrefixKey(const char *prefix_key_buf,
                                        uint8_t prefix_key_len,
                                        BufOrPtr value)
-    : __prefix_key_ptr_value_count(0), prefix_key_len(prefix_key_len), value(value) {
+    : count(0), key(prefix_key_buf, prefix_key_len, true), value(value) {
   assert(prefix_key_len > 0);
-  if (prefix_key_len <= 10) {
-    memcpy(prefix_key_buf10, prefix_key_buf, prefix_key_len);
-  } else {
-    memcpy(prefix_key_buf4, prefix_key_buf, 4);
-    char *ptr = new char[prefix_key_len - 4];
-    SetPrefixKeyPtr(ptr);
-  }
 }
 
-Node4WithPrefixKey::~Node4WithPrefixKey() {
-  if (prefix_key_len > 10) {
-    delete[] GetPrefixKeyPtr();
-  }
-}
-
-void Node4WithPrefixKey::AddKey(partial_key_t key, NodePtr ptr) {
-  auto idx = GetCount();
-  partial_key[idx] = key;
-  child_ptrs[idx] = ptr;
-  IncCount();
-}
-
-NodePtr Node16::FindChild(partial_key_t key_span) {
+NodePtr Node16WithPrefixKey::FindChild(partial_key_t key_span) {
   __m128i key_spans = _mm_set1_epi8(key_span);
   __m128i _partial_key = _mm_load_si128(reinterpret_cast<const __m128i *>(&partial_key));
   __m128i result = _mm_cmpeq_epi8(key_spans, _partial_key);
@@ -127,22 +119,33 @@ NodePtr Node256::FindChild(partial_key_t key_span) {
   return child_ptrs[static_cast<uint8_t>(key_span)];
 }
 
-NodePtr NodePtr::NewLeafWithPrefixKey(const partial_key_t *prefix_key_buf,
-                                      uint8_t prefix_key_len,
-                                      const char *value_buf,
-                                      uint8_t value_len,
-                                      BufOrPtr prefix_value) {
-  assert(prefix_key_len > 0);
+NodePtr NodePtr::NewLeafNode(const partial_key_t *prefix_key_buf,
+                             uint8_t prefix_key_len,
+                             const char *value_buf,
+                             uint8_t value_len,
+                             BufOrPtr prefix_value) {
+  if (prefix_key_len == 0) {
+    NodePtr node_ptr;
+    node_ptr.ToInlineLeafNode(value_buf, value_len);
+    return node_ptr;
+  }
+
   auto *leaf_node_ptr = new LeafNodeWithPrefixKey(prefix_key_buf, prefix_key_len, value_buf, value_len, prefix_value);
   return NodePtr(leaf_node_ptr, NodeType::kLeafNodeWithPrefixKey);
 }
 
-NodePtr NodePtr::NewLeafWithPrefixKey(const char *prefix_key_buf,
-                                      uint8_t prefix_key_len,
-                                      BufOrPtr value, BufOrPtr prefix_value) {
-  assert(prefix_key_len > 0);
+NodePtr NodePtr::NewLeafNode(const char *prefix_key_buf,
+                             uint8_t prefix_key_len,
+                             BufOrPtr value, BufOrPtr prefix_value) {
+
+  if (prefix_key_len == 0) {
+    NodePtr node_ptr;
+    node_ptr.ToInlineLeafNode(value.GetAddr(), value.len);
+    return node_ptr;
+  }
+
   auto *leaf_node_ptr = new LeafNodeWithPrefixKey(prefix_key_buf, prefix_key_len, value, prefix_value);
-  return NodePtr(leaf_node_ptr, NodeType::kInlineLeafNode);
+  return NodePtr(leaf_node_ptr, NodeType::kLeafNodeWithPrefixKey);
 }
 
 void NodePtr::GetLeafValue(std::string &buffer) const {
@@ -166,6 +169,13 @@ void NodePtr::ToInlineLeafNode(const char *value_buffer, uint8_t value_len) {
 
 #ifdef ART_BUILD_TESTS
 void NodePtr::TEST_Layout() {
+  for (char &c : buf) {
+    c = 'h';
+  }
+  SetNodeType(NodeType::kInlineLeafNode);
+  for (char &c : buf) {
+    assert(c == 'h');
+  }
   bits_ = 123;
   assert(value_ptr == 123);
   value_ptr = 45678;
@@ -173,21 +183,6 @@ void NodePtr::TEST_Layout() {
   assert(len == 0);
 }
 
-BufOrPtr NodePtr::ToBufOrPtr() const {
-  BufOrPtr res = BufOrPtr();
-  res.len = len;
-  if (len <= 7) {
-    memcpy(res.buf, buf, len);
-  } else {
-    res.ptr = (uint64_t) GetValuePtr();
-  }
-  return res;
-}
-
 #endif
-
-void Node4::AddKey(partial_key_t key, NodePtr ptr) {
-
-}
 
 }

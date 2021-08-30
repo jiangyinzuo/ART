@@ -10,52 +10,26 @@ namespace {
 
 TEST(ARTNodeTest, Layout) {
   auto leaf = new LeafNodeWithPrefixKey("", 0, "", 0, BufOrPtr());
-  assert((reinterpret_cast<uint64_t>(leaf) & 0b1111) == 0);
+  assert((reinterpret_cast<uint64_t>(leaf) & kNodeTypeMask) == 0);
   delete leaf;
 
-  auto n4 = new Node4WithPrefixKey("a", 1);
-  assert((reinterpret_cast<uint64_t>(n4) & 0b1111) == 0);
+  auto n4 = Node4WithPrefixKey::NewInline("a", 1);
+  assert((reinterpret_cast<uint64_t>(n4) & kNodeTypeMask) == 0);
   delete n4;
 
-  auto n16 = new Node16;
-  assert((reinterpret_cast<uint64_t>(n16) & 0b1111) == 0);
-  delete n16;
-
   auto n48 = new Node48;
-  assert((reinterpret_cast<uint64_t>(n48) & 0b1111) == 0);
+  assert((reinterpret_cast<uint64_t>(n48) & kNodeTypeMask) == 0);
   delete n48;
 
   auto n256 = new Node256;
-  assert((reinterpret_cast<uint64_t>(n256) & 0b1111) == 0);
+  assert((reinterpret_cast<uint64_t>(n256) & kNodeTypeMask) == 0);
   delete n256;
 
   static_assert(sizeof(Node4) == 48);
 
   static_assert(sizeof(LeafNodeWithPrefixKey) == 24);
 
-  static_assert(sizeof(Node4WithPrefixKey) == 64);
-
-  // It is Node4WithPrefixKey's responsibility to free "ptr".
-  char *ptr = new char[10];
-  Node4WithPrefixKey node_4("a", 1);
-  memset(&node_4, 0, sizeof(node_4));
-  node_4.SetPrefixKeyPtr(ptr);
-  assert(node_4.GetCount() == 0);
-  node_4.IncCount();
-  assert(node_4.GetCount() == 1);
-  node_4.IncCount();
-  node_4.prefix_key_len = 23;
-  assert(node_4.GetCount() == 2);
-  node_4.DecCount();
-  assert(node_4.GetCount() == 1);
-  assert(node_4.GetPrefixKeyPtr() == ptr);
-
-  static_assert(sizeof(Node16) == 16 + 16 * 8 + 16);
-  static_assert(alignof(Node16) == 16);
-
-  static_assert(sizeof(Node48) == 256 + 48 * 8 + 8 + 16);
-
-  static_assert(sizeof(Node256) == 256 * 8 + 16);
+  static_assert(alignof(Node16WithPrefixKey) == 16);
 
   static_assert(sizeof(NodePtr) == sizeof(uint64_t));
   void *node4 = malloc(sizeof(Node4WithPrefixKey));
@@ -109,6 +83,34 @@ TEST(ARTNodeTest, Insert3) {
   ASSERT_FALSE(art.Insert("xxx", 3, "yyy", 3));
   ASSERT_TRUE(art.Get("", 0, buf));
   ASSERT_EQ(buf.size(), 5);
+}
+
+void Insert1(AdaptiveRadixTree &art) {
+  std::string buf;
+  ASSERT_FALSE(art.Insert("a", 1, "abcde", 5));
+  ASSERT_TRUE(art.Get("a", 1, buf));
+  ASSERT_EQ(buf.size(), 5);
+  ASSERT_FALSE(art.Insert("b", 3, "yyy", 3));
+  ASSERT_TRUE(art.Get("a", 1, buf));
+  ASSERT_EQ(buf.size(), 5);
+}
+
+TEST(ARTNodeTest, Insert4) {
+  AdaptiveRadixTree art;
+  Insert1(art);
+  art.Insert("", 0, "header", 6);
+  std::string buffer;
+  ASSERT_TRUE(art.Get("", 0, buffer));
+  ASSERT_EQ(buffer, "header");
+}
+
+TEST(ARTNodeTest, Insert5) {
+  AdaptiveRadixTree art;
+  art.Insert("", 0, "header", 6);
+  Insert1(art);
+  std::string buffer;
+  ASSERT_TRUE(art.Get("", 0, buffer));
+  ASSERT_EQ(buffer, "header");
 }
 
 }
