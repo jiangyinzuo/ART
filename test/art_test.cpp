@@ -113,4 +113,25 @@ TEST(ARTNodeTest, Insert5) {
   ASSERT_EQ(buffer, "header");
 }
 
+TEST(ARTNodeTest, Insert6) {
+  AdaptiveRadixTree art;
+  art.Insert("", 0, "header", 6);
+  std::string buffer;
+
+  char* a[][2] = {{"aaaaa", "aaaaaa"}, {"bbbbb", "bbbbbb"}, {"ccccc", "cccccc"}, {"ddddd", "dddddd"}};
+  for (auto s : a) {
+    ASSERT_FALSE(art.Insert(s[0], 5, s[1], 6));
+    art.Get(s[0], 5, buffer);
+    ASSERT_EQ(buffer, s[1]);
+  }
+
+  for (auto s : a) {
+    art.Get(s[0], 5, buffer);
+    ASSERT_EQ(buffer, s[1]);
+  }
+
+  ASSERT_TRUE(art.Get("", 0, buffer));
+  ASSERT_EQ(buffer, "header");
+}
+
 }

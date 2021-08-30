@@ -36,15 +36,31 @@ bool AdaptiveRadixTree::Insert(const partial_key_t *key_buffer,
       case NodeType::kNode4: {
         auto node4_ptr = cur_node_ptr.GetPtr<Node4>();
         if (key_len == 0) {
+          // update prefix value
           bool res = !node4_ptr->node_value.IsUndefined();
           node4_ptr->node_value.Assign(value_buffer, value_len);
           return res;
         }
         NodePtr next_node = Node4FindChild(node4_ptr, *key_buffer);
         if (next_node.IsNullptr()) {
-          // TODO
-//          node4_ptr->TryAddLeafNode(*key_buffer);
+          // child not found, stop search and insert leaf node
+          if (!Node4TryAddLeafNode(node4_ptr,
+                                   *key_buffer,
+                                   NodePtr::NewLeafNode(key_buffer + 1,
+                                                        key_len - 1,
+                                                        value_buffer,
+                                                        value_len,
+                                                        BufOrPtr()))) {
+            // TODO expand
+            throw "not implemented";
+          }
+          return false;
         }
+
+        // child found, continue searching
+        cur_node_ptr = next_node;
+        ++key_buffer;
+        --key_len;
         break;
       }
       case NodeType::kNode16:break;
@@ -59,10 +75,9 @@ bool AdaptiveRadixTree::Insert(const partial_key_t *key_buffer,
           // leaf_node_ptr->key: "abc"
           // key_buffer: "def"
           auto *node4 = new Node4(leaf_node_ptr->prefix_value);
-          //FIXME
           Node4TryAddLeafNode(node4, key_buffer[mismatch_idx],
-                              NodePtr::NewLeafNode(key_buffer + mismatch_idx,
-                                                   key_len - mismatch_idx,
+                              NodePtr::NewLeafNode(key_buffer + mismatch_idx + 1,
+                                                   key_len - mismatch_idx - 1,
                                                    value_buffer,
                                                    value_len, BufOrPtr()));
           Node4TryAddLeafNode(node4, leaf_node_ptr->key[mismatch_idx],
@@ -154,6 +169,8 @@ bool AdaptiveRadixTree::Get(const char *key_buffer, uint8_t key_len, std::string
           return true;
         }
         cur_node = Node4FindChild(node4, *key_buffer);
+        ++key_buffer;
+        --key_len;
         break;
       }
       case NodeType::kNode16: {
