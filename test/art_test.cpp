@@ -8,46 +8,21 @@ using namespace ART_NAMESPACE;
 
 namespace {
 
-TEST(ARTNodeTest, Layout) {
-  auto leaf = new LeafNodeWithPrefixKey("", 0, "", 0, BufOrPtr());
-  assert((reinterpret_cast<uint64_t>(leaf) & kNodeTypeMask) == 0);
-  delete leaf;
-
-  auto n4 = Node4WithPrefixKey::NewInline("a", 1);
-  assert((reinterpret_cast<uint64_t>(n4) & kNodeTypeMask) == 0);
-  delete n4;
-
-  auto n48 = new Node48;
-  assert((reinterpret_cast<uint64_t>(n48) & kNodeTypeMask) == 0);
-  delete n48;
-
-  auto n256 = new Node256;
-  assert((reinterpret_cast<uint64_t>(n256) & kNodeTypeMask) == 0);
-  delete n256;
-
-  static_assert(sizeof(Node4) == 48);
-
-  static_assert(sizeof(LeafNodeWithPrefixKey) == 24);
-
-  static_assert(alignof(Node16WithPrefixKey) == 16);
-
-  static_assert(sizeof(NodePtr) == sizeof(uint64_t));
-  void *node4 = malloc(sizeof(Node4WithPrefixKey));
-
-  NodePtr p{node4, NodeType::kNode4};
-
-  assert(p.GetPtr<void *>() == node4);
-  assert(p.GetNodeType() == NodeType::kNode4);
-  p.SetNodeType(NodeType::kNode256);
-  assert(p.GetPtr<void *>() == node4);
-  assert(p.GetNodeType() == NodeType::kNode256);
-  p.SetPtr(nullptr);
-  assert(p.GetPtr<void *>() == nullptr);
-  assert(p.GetNodeType() == NodeType::kNode256);
-  p.SetNodeType(NodeType::kInlineLeafNode);
-  assert(p.GetNodeType() == NodeType::kInlineLeafNode);
-  p.TEST_Layout();
-  free(node4);
+void InsertAndGet(AdaptiveRadixTree &art,
+                  const char *key,
+                  uint8_t key_len,
+                  const char *value,
+                  uint8_t value_len,
+                  bool expected_insert_result) {
+  ASSERT_EQ(expected_insert_result, art.Insert(key, key_len, value, value_len));
+  std::string buffer(value_len, 'x');
+  art.Get(key, key_len, buffer);
+  const char *c = buffer.c_str();
+  if (memcmp(c, value, value_len) != 0) {
+    std::cerr << buffer << std::endl;
+    std::cerr << value << std::endl;
+    FAIL();
+  }
 }
 
 TEST(ARTNodeTest, Insert1) {
@@ -58,6 +33,7 @@ TEST(ARTNodeTest, Insert1) {
   ASSERT_FALSE(art.Insert("hello", 5, "", 0));
   ASSERT_TRUE(art.Get("hello", 5, buf));
   ASSERT_TRUE(buf.empty());
+  ASSERT_FALSE(art.Get("", 0, buf));
 }
 
 TEST(ARTNodeTest, Insert2) {
@@ -65,12 +41,8 @@ TEST(ARTNodeTest, Insert2) {
   std::string buf;
   ASSERT_FALSE(art.Get("hello", 5, buf));
   ASSERT_TRUE(buf.empty());
-  ASSERT_FALSE(art.Insert("hello", 5, "xxx", 3));
-  ASSERT_TRUE(art.Get("hello", 5, buf));
-  ASSERT_EQ(buf.size(), 3);
-  ASSERT_TRUE(art.Insert("hello", 5, "yyyy", 4));
-  ASSERT_TRUE(art.Get("hello", 5, buf));
-  ASSERT_EQ(buf.size(), 4);
+  InsertAndGet(art, "hello", 5, "xxx", 3, false);
+  InsertAndGet(art, "hello", 5, "yyyy", 4, true);
   ASSERT_FALSE(art.Insert("world", 5, "a", 1));
 }
 
@@ -118,20 +90,28 @@ TEST(ARTNodeTest, Insert6) {
   art.Insert("", 0, "header", 6);
   std::string buffer;
 
-  char* a[][2] = {{"aaaaa", "aaaaaa"}, {"bbbbb", "bbbbbb"}, {"ccccc", "cccccc"}, {"ddddd", "dddddd"}};
-  for (auto s : a) {
-    ASSERT_FALSE(art.Insert(s[0], 5, s[1], 6));
-    art.Get(s[0], 5, buffer);
-    ASSERT_EQ(buffer, s[1]);
+  const char *a[][2] = {{"aaaaa", "aaaaaa"}, {"bbbbb", "bbbbbb"}, {"ccccc", "cccccc"}, {"ddddd", "dddddd"}};
+  for (auto s: a) {
+    InsertAndGet(art, s[0], 5, s[1], 6, false);
   }
 
-  for (auto s : a) {
+  for (auto s: a) {
     art.Get(s[0], 5, buffer);
     ASSERT_EQ(buffer, s[1]);
   }
 
   ASSERT_TRUE(art.Get("", 0, buffer));
   ASSERT_EQ(buffer, "header");
+}
+
+TEST(ARTNodeTest, InsertNode4WithPrefixKey) {
+  AdaptiveRadixTree art;
+  InsertAndGet(art, "world", 5, "apple", 5, false);
+  InsertAndGet(art, "wolf", 4, "orange", 6, false);
+  InsertAndGet(art, "", 0, "header1", 7, false);
+  InsertAndGet(art, "", 0, "hello world!!!", 14, true);
+  InsertAndGet(art, "wo", 2, "banana", 6, false);
+  InsertAndGet(art, "wo", 2, "watermelon", 10, true);
 }
 
 }

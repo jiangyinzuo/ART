@@ -14,59 +14,24 @@ namespace ART_NAMESPACE {
 
 using partial_key_t = char;
 
-struct __attribute__((packed)) KeyBuf {
-  KeyBuf(const char *prefix_key_buf, uint8_t prefix_key_len, bool is_offset)
-      : len(prefix_key_len), is_offset(is_offset) {
-    if (is_offset) {
-      offset = 0;
-      memcpy((void *) GetAddr(), prefix_key_buf, prefix_key_len);
-    } else {
-      SetPtr(prefix_key_buf);
-    }
-  }
-
-  const char *operator+(uint8_t n) const {
-    return GetAddr() + n;
-  }
-
-  char operator[](uint8_t n) const {
-    assert(n < len);
-    return GetAddr()[n];
-  }
-  size_t CmpMismatch(const char *buffer, size_t n);
-
-  bool IsEqualTo(const char *buffer, size_t n) const {
-    return n == len && memcmp(GetAddr(), buffer, n) == 0;
-  }
-
-  const char *GetAddr() const {
-    return is_offset ? is_offset_data + offset : reinterpret_cast<const char *>(ptr[0] & 0xffffffffffffff00);
-  }
-  void SetPtr(const char *prefix_key_buf) {
-    assert(!is_offset);
-    ptr[0] = ptr[0] & 0x00000000000000ff | (reinterpret_cast<uint64_t>(prefix_key_buf) & 0xffffffffffffff00);
-  }
-
- private:
-  uint64_t ptr[0];
- public:
-  uint8_t len: 7;
-  uint8_t is_offset: 1;
- private:
-  uint8_t offset;
-  char is_offset_data[0];
-};
-
-struct alignas(8) BufOrPtr {
-  BufOrPtr() = default;
-  BufOrPtr(const char *ptr, uint8_t len);
+struct __attribute__((packed)) ValueBufOrPtr {
+  ValueBufOrPtr() : len(0), ptr(0) {}
+  ValueBufOrPtr(const char *ptr, uint8_t len);
 
   const char *GetAddr() const {
     return len <= 7 ? buf : reinterpret_cast<const char *> (ptr);
   }
 
+  bool Update(const char *value_buffer, uint8_t value_len) {
+    bool res = !IsUndefined();
+    Assign(value_buffer, value_len);
+    return res;
+  }
+
   void Assign(const char *buffer, size_t n);
-  void CopyToBuffer(std::string &buffer) const;
+
+  // Return true if old value is defined.
+  bool CopyToBuffer(std::string &buffer) const;
 
   bool IsUndefined() const {
     return len == 0 && buf[6] == 0;
@@ -89,21 +54,67 @@ struct alignas(8) BufOrPtr {
   };
 };
 
-constexpr uint64_t kNodeTypeMask = 0b1111;
+class __attribute__((packed)) PrefixKeyValueBuf {
+ public:
+  PrefixKeyValueBuf() = default;
+  PrefixKeyValueBuf(const PrefixKeyValueBuf &) = delete;
+  PrefixKeyValueBuf(const char *prefix_key_buf, uint8_t prefix_key_len) {
+    data_[0] = prefix_key_len;
+    memcpy(data_ + 9, prefix_key_buf, prefix_key_len);
+    *(uint64_t *)(data_ + 1) = 0;
+  }
+
+  PrefixKeyValueBuf(const char *prefix_key_buf, uint8_t prefix_key_len, ValueBufOrPtr prefix_value) {
+    data_[0] = prefix_key_len;
+    *reinterpret_cast<ValueBufOrPtr *>(data_ + 1) = prefix_value;
+    memcpy(data_ + 9, prefix_key_buf, prefix_key_len);
+  }
+
+  void *operator new(size_t) = delete;
+
+  bool MatchPrefixKey(const partial_key_t *&key_buffer, uint8_t &key_len);
+
+  size_t KeyCmpMismatch(const char *buffer, size_t n);
+
+  bool KeyIsEqualTo(const char *buffer, size_t n) const {
+    return n == GetKeyLen() && memcmp(GetKeyBuf(), buffer, n) == 0;
+  }
+
+  void KeyMoveBackward(uint8_t n) {
+    assert(GetKeyLen() >= n);
+    memcpy(GetKeyBuf(), GetKeyBuf() + n, n);
+    data_[0] -= n;
+  }
+
+  uint8_t GetKeyLen() const {
+    return data_[0];
+  }
+
+  ValueBufOrPtr *GetValueBufOrPtr() const {
+    return reinterpret_cast<ValueBufOrPtr *>(const_cast<uint8_t *>(data_ + 1));
+  }
+
+  char *GetKeyBuf() const {
+    return (char *) (data_ + 9);
+  }
+
+ private:
+  uint8_t data_[0];
+};
+
+constexpr uint64_t kNodeTypeMask = 0b111;
+constexpr uint64_t kHasPrefixKeyMask = 0b1000;
+constexpr uint64_t kPtrMask = UINT64_MAX ^ kNodeTypeMask ^ kHasPrefixKeyMask;
 
 enum class NodeType {
   kNullPtr = 0,
   // leaf node can be regarded as "Node1", inline leaf node only contains value.
   kInlineLeafNode = 1,
-  kNode4 = 2,
-  kNode16 = 3,
-  kNode48 = 4,
-  kNode256 = 5,
-  kLeafNodeWithPrefixKey = 6,
-  kNode4WithPrefixKey = 7,
-  kNode16WithPrefixKey = 8,
-  kNode48WithPrefixKey = 9,
-  kNode256WithPrefixKey = 10,
+  kLeafNodeWithPrefixKey = 2,
+  kNode4 = 3,
+  kNode16 = 4,
+  kNode48 = 5,
+  kNode256 = 6,
 };
 
 // Wrapper of `Node4WithPrefixKey`, `Node16WithPrefixKey`, `Node48` and `Node256`'s pointer.
@@ -113,16 +124,16 @@ struct NodePtr {
   static NodePtr NewLeafNode(const char *prefix_key_buf,
                              uint8_t prefix_key_len,
                              const char *value_buf,
-                             uint8_t value_len, BufOrPtr prefix_value);
+                             uint8_t value_len, ValueBufOrPtr prefix_value);
 
   static NodePtr NewLeafNode(const char *prefix_key_buf,
-                             uint8_t prefix_key_len, BufOrPtr value, BufOrPtr prefix_value);
+                             uint8_t prefix_key_len, ValueBufOrPtr value, ValueBufOrPtr prefix_value);
 
   NodePtr() : bits_(0) {}
 
-  NodePtr(void *ptr, NodeType tp) : bits_(
-      reinterpret_cast<uint64_t>(ptr) | static_cast<uint64_t>(tp)) {
-    assert((reinterpret_cast<uint64_t>(ptr) & kNodeTypeMask) == 0);
+  NodePtr(void *ptr, NodeType tp, bool has_prefix_key) : bits_(
+      reinterpret_cast<uint64_t>(ptr) | has_prefix_key << 3 | static_cast<uint64_t>(tp)) {
+    assert((reinterpret_cast<uint64_t>(ptr) & ~kPtrMask) == 0);
   }
 
   void GetLeafValue(std::string &buffer) const;
@@ -131,36 +142,44 @@ struct NodePtr {
 
   template<class T>
   inline T *GetPtr() const {
-    return reinterpret_cast<T *>(bits_ & (UINT64_MAX - kNodeTypeMask));
+    return reinterpret_cast<T *>(bits_ & kPtrMask);
   }
 
-  BufOrPtr ToBufOrPtr() const;
+  ValueBufOrPtr ToBufOrPtr() const;
 
-  inline const char *GetValuePtr() const {
-    return reinterpret_cast<char *>(value_ptr & (UINT64_MAX - kNodeTypeMask));
+  const char *GetValuePtr() const {
+    return reinterpret_cast<char *>(value_ptr & kPtrMask);
   }
 
-  inline NodeType GetNodeType() const {
+  bool HasPrefixKey() const {
+    return (bits_ & kHasPrefixKeyMask) > 0;
+  }
+
+  NodeType GetNodeType() const {
     return static_cast<NodeType>(bits_ & kNodeTypeMask);
   }
 
-  inline void SetPtr(void *ptr) {
+  void SetPtr(void *ptr) {
     auto n = reinterpret_cast<uint64_t>(ptr);
-    assert((n & kNodeTypeMask) == 0);
-    bits_ = n | (bits_ & kNodeTypeMask);
+    assert((n & ~kPtrMask) == 0);
+    bits_ = n | (bits_ & ~kPtrMask);
   }
 
-  inline void SetValuePtr(const char *value_ptr) {
+  void SetValuePtr(const char *value_ptr) {
     auto n = reinterpret_cast<uint64_t>(value_ptr);
-    assert((n & kNodeTypeMask) == 0);
-    this->value_ptr = n | (this->value_ptr & kNodeTypeMask);
+    assert((n & ~kPtrMask) == 0);
+    this->value_ptr = n | (this->value_ptr & ~kPtrMask);
   }
 
-  inline void SetNodeType(NodeType tp) {
-    bits_ = (bits_ & (UINT64_MAX - kNodeTypeMask)) | static_cast<uint64_t>(tp);
+  void SetNoPrefixKey() {
+    bits_ &= ~kHasPrefixKeyMask;
   }
 
-  inline bool IsNullptr() const { return bits_ == 0; }
+  void SetNodeType(NodeType tp) {
+    bits_ = (bits_ & ~kNodeTypeMask) | static_cast<uint64_t>(tp);
+  }
+
+  bool IsNullptr() const { return bits_ == 0; }
 
 #ifdef ART_BUILD_TESTS
   void TEST_Layout();
@@ -182,132 +201,108 @@ struct NodePtr {
   };
 };
 
-struct Node4 {
-  Node4() : count(0) {}
-  Node4(BufOrPtr node_value) : node_value(node_value), count(0) {
-  }
+// lazy expansion: partial pre_kv may be stored in leaf node
+class LeafNodeWithPrefixKey {
+ public:
+  void *operator new(size_t) = delete;
+  void operator delete(void *) = delete;
 
-  inline uint32_t GetCount() const { return count; }
-
-  inline void IncCount() { ++count; }
-
-  NodePtr child_ptrs[4];
-  BufOrPtr node_value;
-  partial_key_t partial_key[4];
-  uint8_t count;
-};
-
-// lazy expansion: partial key may be stored in leaf node
-struct LeafNodeWithPrefixKey {
-
-  LeafNodeWithPrefixKey(const partial_key_t *prefix_key_buf,
-                        uint8_t prefix_key_len,
-                        const char *value_buf,
-                        uint8_t value_len, BufOrPtr prefix_value);
-
-  LeafNodeWithPrefixKey(const partial_key_t *prefix_key_buf,
-                        uint8_t prefix_key_len, BufOrPtr value, BufOrPtr prefix_value);
+  static LeafNodeWithPrefixKey *New(const char *prefix_key_buf,
+                                    uint8_t prefix_key_len,
+                                    ValueBufOrPtr value,
+                                    ValueBufOrPtr prefix_value);
 
   bool GetIfMatch(
       const partial_key_t *key_buffer,
       uint8_t key_len,
       std::string &value_buffer) const;
 
-  BufOrPtr prefix_value, value;
-  KeyBuf key;
+  NodePtr ToChildNode(uint8_t mismatch_idx);
+
+  ValueBufOrPtr node_value;
+  PrefixKeyValueBuf pre_kv;
+
+ private:
+  LeafNodeWithPrefixKey(const partial_key_t *prefix_key_buf,
+                        uint8_t prefix_key_len, ValueBufOrPtr node_value, ValueBufOrPtr prefix_value);
+  void *operator new(size_t, void *ptr) {
+    return ptr;
+  }
 };
 
-class Node4WithPrefixKey {
- public:
-  static Node4WithPrefixKey *NewInline(const char *prefix_key_buf, uint8_t prefix_key_len, BufOrPtr value = BufOrPtr());
+static_assert(sizeof(LeafNodeWithPrefixKey) == 8);
 
-  uint32_t GetCount() const { return count; }
+class Node4 {
+ public:
+
+  static Node4 *New(ValueBufOrPtr node_value);
+  static Node4 *NewWithPrefixKey(const char *prefix_key_buf,
+                                 uint8_t prefix_key_len,
+                                 ValueBufOrPtr value = ValueBufOrPtr());
+
+  void *operator new(size_t) = delete;
+  void operator delete(void *) = delete;
+
+  NodePtr FindChild(partial_key_t key_span);
+
+  // Return true if child node is successfully added.
+  bool TryAppendChild(partial_key_t key, NodePtr ptr);
+  NodePtr ToChildNode(uint8_t n);
+  inline uint32_t GetCount() const { return count; }
 
   NodePtr child_ptrs[4];
-  BufOrPtr prefix_value, value;
+  ValueBufOrPtr node_value;
   partial_key_t partial_key[4];
   uint8_t count;
-  KeyBuf key;
+  PrefixKeyValueBuf pre_kv;
+
  private:
-  Node4WithPrefixKey(const char *prefix_key_buf,
-                     uint8_t prefix_key_len,
-                     BufOrPtr value);
+  Node4(ValueBufOrPtr node_value) : node_value(node_value), count(0) {}
+  Node4(const char *prefix_key_buf,
+        uint8_t prefix_key_len,
+        ValueBufOrPtr value);
+
+  void *operator new(size_t, void *ptr) { return ptr; }
 };
-
-template<class T>
-concept Node4Concept = requires(T t) {
-  { t.GetCount() } -> std::same_as<uint32_t>;
-  t.count;
-};
-
-template<Node4Concept Node4>
-NodePtr Node4FindChild(Node4 *node4, partial_key_t key_span) {
-  for (uint32_t i = 0; i < node4->GetCount(); ++i) {
-    if (node4->partial_key[i] == key_span) {
-      return NodePtr{node4->child_ptrs[i]};
-    }
-  }
-  return NodePtr();
-}
-
-// Return true if leaf node is successfully added.
-template<Node4Concept N>
-bool Node4TryAddLeafNode(N *node4, partial_key_t key, NodePtr ptr) {
-  auto idx = node4->GetCount();
-  bool res = idx < 4;
-  if (res) {
-    node4->partial_key[idx] = key;
-    node4->child_ptrs[idx] = ptr;
-    ++node4->count;
-  }
-  return res;
-}
 
 struct __attribute__((packed)) Node16 {
+  void *operator new(size_t) = delete;
+  void operator delete(void *) = delete;
+
+  NodePtr FindChild(partial_key_t key_span);
+
   // SSE2 comparison
   alignas(16) partial_key_t partial_key[16];
   NodePtr child_ptrs[16];
-  BufOrPtr value;
+  ValueBufOrPtr node_value;
   uint8_t count;
+  PrefixKeyValueBuf pre_kv;
 };
 
 static_assert(sizeof(Node16) == 16 + 16 * 8 + 16);
 
-struct __attribute__((packed)) Node16WithPrefixKey {
-  // SSE2 comparison
-  alignas(16) partial_key_t partial_key[16];
-  NodePtr child_ptrs[16];
-  BufOrPtr prefix_value, value;
-  uint8_t count;
-  KeyBuf key;
-
-  NodePtr FindChild(partial_key_t key_span);
-};
-
 struct Node48 {
+  void *operator new(size_t) = delete;
+  void operator delete(void *) = delete;
+
   uint8_t child_indexes[256];
   NodePtr child_ptrs[48];
   uint64_t bitmap;
-  BufOrPtr value;
+  ValueBufOrPtr node_value;
+  PrefixKeyValueBuf pre_kv;
 
   NodePtr FindChild(partial_key_t key_span);
-};
-
-struct Node48WithPrefixKey : public Node48 {
-  BufOrPtr prefix_value;
-  KeyBuf key;
 };
 
 struct Node256 {
+  void *operator new(size_t) = delete;
+  void operator delete(void *) = delete;
+
   NodePtr child_ptrs[256]{NodePtr()};
-  BufOrPtr value;
+  ValueBufOrPtr node_value;
+  PrefixKeyValueBuf pre_kv;
 
   NodePtr FindChild(partial_key_t key_span);
-};
-
-struct Node256WithPrefixKey : public Node256 {
-  BufOrPtr prefix_value;
-  KeyBuf key;
 };
 
 }
