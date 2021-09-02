@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(ART)
 
+set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++20")
 
@@ -15,10 +16,11 @@ endif (ART_BUILD_TESTS)
 
 if (MSVC)
 else ()
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mbmi ")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mbmi ")
 endif ()
 
-file(GLOB ART_SRC src/*.cpp)
+file(GLOB ART_SRC src/*.c)
 add_library(${PROJECT_NAME} STATIC ${ART_SRC})
 target_include_directories(${PROJECT_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 

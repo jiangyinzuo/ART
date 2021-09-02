@@ -2,24 +2,26 @@
 
 #pragma once
 
-#include "art/art_node.h"
+#include <stddef.h>
+#include <stdint.h>
 
-namespace ART_NAMESPACE {
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-class AdaptiveRadixTree {
- public:
-  AdaptiveRadixTree();
-  ~AdaptiveRadixTree();
+typedef uint64_t node_slot_t;
 
-  bool Insert(const partial_key_t *key_buffer, uint8_t key_len, const char *value_buffer, uint8_t value_len);
-  bool Get(const partial_key_t *key_buffer, uint8_t key_len, std::string &value_buffer) const;
-  bool Delete(const partial_key_t *key_buffer, size_t key_len);
-
-  inline size_t GetSize() const { return size_; }
-
- private:
-  NodePtr root_;
-  size_t size_;
+struct art {
+    node_slot_t root;
+    size_t size;
 };
 
+void art_init(struct art *art);
+
+void *art_insert(struct art *art, const char *key, size_t key_len, void *value);
+
+void *art_get(struct art *art, const char *key, size_t key_len);
+
+#ifdef __cplusplus
 }
+#endif
