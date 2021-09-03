@@ -14,7 +14,8 @@
 #define PTR_MASK 0x00fffffffffffff8
 #define TYPE_MASK 0b111
 
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define LIKELY(x) (__builtin_expect((x), 1))
+#define UNLIKELY(x) (__builtin_expect((x), 0))
 
 _Static_assert(sizeof(struct art) == 16, "");
 
@@ -30,16 +31,16 @@ enum node_type {
 typedef struct __attribute__((packed)) {
     node_slot_t child;
     uint8_t key_len;
-    char prefix_key[];
+    unsigned char prefix_key[];
 } node1_t;
 
 _Static_assert(sizeof(node1_t) == 8 + 1, "");
 
 typedef struct __attribute__((packed)) {
     node_slot_t children[4];
-    char keys[4];
+    unsigned char keys[4];
     uint8_t key_len;
-    char prefix_key[];
+    unsigned char prefix_key[];
 } node4_t;
 
 _Static_assert(sizeof(node4_t) == 4 * 8 + 4 + 1, "");
@@ -54,7 +55,7 @@ typedef struct __attribute__((packed)) {
 _Static_assert(sizeof(node16_t) == 16 * 8 + 16 + 1, "");
 
 typedef struct __attribute__((packed)) {
-    char keys[256];
+    uint8_t keys[256];
     node_slot_t children[48];
     uint8_t key_len;
     char prefix_key[];
@@ -107,6 +108,11 @@ static inline uint8_t get_prefix_key_len(const char *prefix_key) {
     return prefix_key[-1];
 }
 
+static inline void dec_prefix_key_len(char *prefix_key, uint8_t len) {
+    assert((uint8_t)prefix_key[-1] >= len);
+    *(uint8_t *)(prefix_key - 1) = (uint8_t)prefix_key[-1] - len;
+}
+
 static void new_node1(node_slot_t **cur_node_slot_ptr, const char *key,
                       uint8_t key_len, node_slot_t child) {
     if (key_len) {
@@ -146,17 +152,38 @@ static void split_prefix_key_to_node4(node_slot_t **cur_node_slot_ptr,
                                       size_t common_prefix_key_len,
                                       char new_child) {
     node_slot_t old_node = **cur_node_slot_ptr;
-    node4_t *node_ptr =
-        calloc(sizeof(node4_t) + common_prefix_key_len, sizeof(char));
-    assert(((uint64_t)node_ptr & TYPE_MASK) == 0);
 
-    node_ptr->keys[0] = prefix_key[common_prefix_key_len];
-    node_ptr->children[0] = old_node;
-    node_ptr->keys[1] = new_child;
-    node_ptr->key_len = common_prefix_key_len;
-    memcpy(node_ptr->prefix_key, prefix_key, common_prefix_key_len);
-    **cur_node_slot_ptr = ptr_to_slot_num_children(node_ptr, NODE_4, 2);
-    *cur_node_slot_ptr = &node_ptr->children[1];
+    node4_t *new_node4 =
+        calloc(sizeof(node4_t) + common_prefix_key_len, sizeof(char));
+    assert(((uint64_t)new_node4 & TYPE_MASK) == 0);
+
+    uint8_t prefix_key_len = get_prefix_key_len(prefix_key);
+    new_node4->keys[0] = prefix_key_len == common_prefix_key_len
+                             ? 0
+                             : prefix_key[common_prefix_key_len];
+    node1_t *old_node1;
+    _Bool free_old_node1 = 0;
+    if (UNLIKELY(prefix_key_len <= common_prefix_key_len + 1 &&
+                 get_type(old_node))) {
+        old_node1 = (node1_t *)get_raw(old_node);
+        old_node = old_node1->child;
+        free_old_node1 = 1;
+    }
+
+    new_node4->children[0] = old_node;
+    new_node4->keys[1] = new_child;
+    new_node4->key_len = common_prefix_key_len;
+
+    // move the common prefix to new node
+    memcpy(new_node4->prefix_key, prefix_key, common_prefix_key_len);
+    memmove((void *)prefix_key, prefix_key + common_prefix_key_len + 1,
+            prefix_key_len - common_prefix_key_len - 1);
+    dec_prefix_key_len((char *)prefix_key, common_prefix_key_len + 1);
+
+    **cur_node_slot_ptr = ptr_to_slot_num_children(new_node4, NODE_4, 2);
+    *cur_node_slot_ptr = &new_node4->children[1];
+    if (free_old_node1)
+        free(old_node1);
 }
 
 static size_t mem_cmp_mismatch(const char *buf1, const char *buf2, size_t n) {
@@ -179,8 +206,8 @@ static inline uint8_t key_compare(const char **key, size_t *key_len,
     return mismatch_idx;
 }
 
-static node_slot_t node4_find_child(node4_t *node4, char key,
-                                    uint8_t num_children) {
+static inline node_slot_t node4_find_child(node4_t *node4, unsigned char key,
+                                           uint8_t num_children) {
     for (uint8_t i = 0; i < num_children; ++i) {
         if (node4->keys[i] == key) {
             return node4->children[i];
@@ -189,62 +216,155 @@ static node_slot_t node4_find_child(node4_t *node4, char key,
     return 0;
 }
 
-static node_slot_t node16_find_child(node16_t *node16, char key,
-                                     uint8_t num_children) {
+static int node16_find_child_idx(node16_t *node16, unsigned char key,
+                                 uint8_t num_children) {
     __m128i key_spans = _mm_set1_epi8(key);
     __m128i _partial_key = _mm_load_si128((const __m128i *)(&node16->keys));
     __m128i result = _mm_cmpeq_epi8(key_spans, _partial_key);
     int mask = (1 << num_children) - 1;
     int idx = _mm_movemask_epi8(result);
     idx &= mask;
+    return idx;
+}
+
+static inline node_slot_t node16_find_child(node16_t *node16, unsigned char key,
+                                            uint8_t num_children) {
+    int idx = node16_find_child_idx(node16, key, num_children);
     return idx > 0 ? node16->children[_tzcnt_u32((uint32_t)idx)] : 0;
 }
 
-static node_slot_t node4_expand_to_node16(node4_t *node4, char key) {
+static inline node_slot_t node48_find_child(node48_t *node48, unsigned char key,
+                                            uint8_t _num_children) {
+    uint8_t child_idx = node48->keys[key];
+    node_slot_t child = node48->children[child_idx - 1];
+    return child;
+}
+
+static inline node_slot_t node256_find_child(node256_t *node256,
+                                             unsigned char key,
+                                             uint8_t _num_children) {
+    return node256->children[key];
+}
+
+static node_slot_t *node4_expand_to_node16(node_slot_t *cur_node_ptr,
+                                           node4_t *node4, unsigned char key) {
     node16_t *node16 = calloc(sizeof(node16_t) + node4->key_len, sizeof(char));
     node16->key_len = node4->key_len;
     memcpy(node16->keys, node4->keys, sizeof(char) * 4);
     memcpy(node16->children, node4->children, sizeof(node_slot_t) * 4);
     memcpy(node16->prefix_key, node4->prefix_key, node16->key_len);
     node16->keys[4] = key;
-    return ptr_to_slot_num_children(node16, NODE_16, 5);
+    *cur_node_ptr = ptr_to_slot_num_children(node16, NODE_16, 5);
+    return node16->children + 4;
 }
 
-static node_slot_t node16_expand_to_node48(node16_t *node16, char key) {
+static node_slot_t *node16_expand_to_node48(node_slot_t *cur_node_ptr,
+                                            node16_t *node16,
+                                            unsigned char key) {
     node48_t *node48 = calloc(sizeof(node48_t) + node16->key_len, sizeof(char));
 
     assert(((uint64_t)&node48->keys & 0b1111) == 0);
 
     node48->key_len = node16->key_len;
     for (uint8_t i = 0; i < 16; ++i) {
-        node48->keys[node16->keys[i]] = i;
+        // keys['x'] == 0 means 'x' doesn't have child.
+        assert(key != node16->keys[i]);
+        node48->keys[node16->keys[i]] = i + 1;
         node48->children[i] = node16->children[i];
     }
     memcpy(node48->prefix_key, node16->prefix_key, node48->key_len);
-    node48->keys[16] = key;
-    return ptr_to_slot_num_children(node16, NODE_48, 17);
+    node48->keys[key] = 17;
+    *cur_node_ptr = ptr_to_slot_num_children(node48, NODE_48, 17);
+    return node48->children + 16;
 }
 
-#define DEFINE_NODEX_FIND_OR_APPEND_CHILD(X, EXPAND_X)                         \
-    static node_slot_t *node##X##_find_or_append_child(                        \
-        node_slot_t *cur_node_ptr, node##X##_t *node##X, char key,             \
-        uint8_t num_children) {                                                \
-        if (num_children < (X)) {                                              \
-            for (uint8_t i = 0; i < num_children; ++i) {                       \
-                if (node##X->keys[i] == key) {                                 \
-                    return node##X->children + i;                              \
-                }                                                              \
-            }                                                                  \
-            node##X->keys[num_children] = key;                                 \
-            set_num_children(cur_node_ptr, num_children + 1);                  \
-            return node##X->children + num_children;                           \
-        }                                                                      \
-        *cur_node_ptr = node##X##_expand_to_node##EXPAND_X(node##X, key);      \
-        return cur_node_ptr;                                                   \
+static node_slot_t *node48_expand_to_node256(node_slot_t *cur_node_ptr,
+                                             node48_t *node48,
+                                             unsigned char key) {
+    node256_t *node256 =
+        calloc(sizeof(node256_t) + node48->key_len, sizeof(char));
+
+    node256->key_len = node48->key_len;
+    for (unsigned int i = 0; i <= 255; ++i) {
+        uint8_t child_idx;
+        if ((child_idx = LIKELY(node48->keys[i])) > 0) {
+            assert(1 <= child_idx && child_idx <= 48);
+            node256->children[i] = node48->children[child_idx - 1];
+        }
+    }
+    memcpy(node256->prefix_key, node48->prefix_key, node256->key_len);
+    *cur_node_ptr = ptr_to_slot_num_children(node256, NODE_256, 49);
+    return node256->children + (uint8_t)key;
+}
+
+static node_slot_t *node4_find_or_append_child(node_slot_t *cur_node_ptr,
+                                               node4_t *node4,unsigned char key,
+                                               uint8_t num_children) {
+    // find child
+    for (uint8_t i = 0; i < num_children; ++i) {
+        if (node4->keys[i] == key) {
+            return node4->children + i;
+        }
     }
 
-DEFINE_NODEX_FIND_OR_APPEND_CHILD(4, 16)
-DEFINE_NODEX_FIND_OR_APPEND_CHILD(16, 48)
+    // not found, append child or expand node
+    if (num_children < 4) {
+        node4->keys[num_children] = key;
+        set_num_children(cur_node_ptr, num_children + 1);
+        return node4->children + num_children;
+    } else {
+        return node4_expand_to_node16(cur_node_ptr, node4, key);
+    }
+}
+
+static node_slot_t *node16_find_or_append_child(node_slot_t *cur_node_ptr,
+                                                node16_t *node16, unsigned char key,
+                                                uint8_t num_children) {
+    // find child
+    int idx = node16_find_child_idx(node16, key, num_children);
+    if (idx > 0) {
+        return node16->children + _tzcnt_u32((uint32_t)idx);
+    }
+
+    // not found, append child or expand node
+    if (UNLIKELY(num_children == 16)) {
+        return node16_expand_to_node48(cur_node_ptr, node16, key);
+    } else {
+        node16->keys[num_children] = key;
+        set_num_children(cur_node_ptr, num_children + 1);
+        return node16->children + num_children;
+    }
+}
+
+static node_slot_t *node48_find_or_append_child(node_slot_t *cur_node_ptr,
+                                                node48_t *node48, unsigned char key,
+                                                uint8_t num_children) {
+    // find child
+    uint8_t child_idx = node48->keys[key];
+    if (child_idx) {
+        // child found
+        return node48->children + child_idx - 1;
+    }
+
+    // not found, append child or expand node
+    if (UNLIKELY(num_children == 48)) {
+        return node48_expand_to_node256(cur_node_ptr, node48, key);
+    } else {
+        node48->keys[key] = num_children + 1;
+        set_num_children(cur_node_ptr, num_children + 1);
+        return node48->children + num_children;
+    }
+}
+
+static inline node_slot_t *
+node256_find_or_append_child(node_slot_t *cur_node_ptr, node256_t *node256,
+                             unsigned char key, uint8_t num_children) {
+    // not found, append child
+    if (node256->children[key] == 0) {
+        set_num_children(cur_node_ptr, num_children + 1);
+    }
+    return node256->children + (uint8_t)key;
+}
 
 #define FIND_OR_APPEND_CHILD(N)                                                \
     {                                                                          \
@@ -264,7 +384,7 @@ inline void art_init(struct art *art) {
 
 void *art_insert(struct art *restrict art, const char *restrict key,
                  size_t key_len, void *restrict value) {
-    if (value == NULL) {
+    if (UNLIKELY(value == NULL)) {
         return NULL;
     }
 
@@ -328,8 +448,10 @@ void *art_insert(struct art *restrict art, const char *restrict key,
             FIND_OR_APPEND_CHILD(16);
             break;
         case NODE_48:
+            FIND_OR_APPEND_CHILD(48);
             break;
         case NODE_256:
+            FIND_OR_APPEND_CHILD(256);
             break;
         }
     }
@@ -340,6 +462,16 @@ FINAL:
     }
     return result;
 }
+
+#define FIND_CHILD(N)                                                          \
+    {                                                                          \
+        cur_node_slot_ptr = node##N##_find_child(                              \
+            raw, *key, get_num_children(cur_node_slot_ptr));                   \
+        if (key_len) {                                                         \
+            ++key;                                                             \
+            --key_len;                                                         \
+        }                                                                      \
+    }
 
 void *art_get(struct art *art, const char *key, size_t key_len) {
     for (node_slot_t cur_node_slot_ptr = art->root; cur_node_slot_ptr;) {
@@ -366,24 +498,16 @@ void *art_get(struct art *art, const char *key, size_t key_len) {
             cur_node_slot_ptr = ((node1_t *)raw)->child;
             break;
         case NODE_4:
-            cur_node_slot_ptr = node4_find_child(
-                raw, *key, get_num_children(cur_node_slot_ptr));
-            if (key_len) {
-                ++key;
-                --key_len;
-            }
+            FIND_CHILD(4);
             break;
         case NODE_16:
-            cur_node_slot_ptr = node16_find_child(
-                raw, *key, get_num_children(cur_node_slot_ptr));
-            if (key_len) {
-                ++key;
-                --key_len;
-            }
+            FIND_CHILD(16);
             break;
         case NODE_48:
+            FIND_CHILD(48);
             break;
         case NODE_256:
+            FIND_CHILD(256);
             break;
         }
     }
