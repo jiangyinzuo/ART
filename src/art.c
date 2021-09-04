@@ -8,7 +8,7 @@
 
 #include "art/art.h"
 
-#define MAX_PREFIX_KEY_LEN 8
+_Static_assert(8 <= MAX_PREFIX_KEY_LEN && MAX_PREFIX_KEY_LEN <= 255, "");
 
 #define NUM_CHILDREN_MASK 0xff00000000000000
 #define PTR_MASK 0x00fffffffffffff8
@@ -93,6 +93,8 @@ static inline void set_num_children(node_slot_t *node_slot,
 static inline enum node_type get_type(node_slot_t n) { return n & TYPE_MASK; }
 
 static inline void *get_raw(node_slot_t n) { return (void *)(n & PTR_MASK); }
+
+static inline void clear_raw(node_slot_t *n) { *n = *n & ~PTR_MASK; }
 
 static inline uint8_t get_num_children(node_slot_t n) { return n >> 56; }
 
@@ -216,9 +218,20 @@ static inline node_slot_t node4_find_child(node4_t *node4, unsigned char key,
     return 0;
 }
 
+static inline node_slot_t *node4_find_child_place(node4_t *node4,
+                                                  unsigned char key,
+                                                  uint8_t num_children) {
+    for (uint8_t i = 0; i < num_children; ++i) {
+        if (node4->keys[i] == key) {
+            return node4->children + i;
+        }
+    }
+    return 0;
+}
+
 static int node16_find_child_idx(node16_t *node16, unsigned char key,
                                  uint8_t num_children) {
-    __m128i key_spans = _mm_set1_epi8(key);
+    __m128i key_spans = _mm_set1_epi8((char)key);
     __m128i _partial_key = _mm_load_si128((const __m128i *)(&node16->keys));
     __m128i result = _mm_cmpeq_epi8(key_spans, _partial_key);
     int mask = (1 << num_children) - 1;
@@ -233,6 +246,13 @@ static inline node_slot_t node16_find_child(node16_t *node16, unsigned char key,
     return idx > 0 ? node16->children[_tzcnt_u32((uint32_t)idx)] : 0;
 }
 
+static inline node_slot_t *node16_find_child_place(node16_t *node16,
+                                                   unsigned char key,
+                                                   uint8_t num_children) {
+    int idx = node16_find_child_idx(node16, key, num_children);
+    return idx > 0 ? node16->children + _tzcnt_u32((uint32_t)idx) : 0;
+}
+
 static inline node_slot_t node48_find_child(node48_t *node48, unsigned char key,
                                             uint8_t _num_children) {
     uint8_t child_idx = node48->keys[key];
@@ -240,10 +260,24 @@ static inline node_slot_t node48_find_child(node48_t *node48, unsigned char key,
     return child;
 }
 
+static inline node_slot_t *node48_find_child_place(node48_t *node48,
+                                                   unsigned char key,
+                                                   uint8_t _num_children) {
+    uint8_t child_idx = node48->keys[key];
+    node_slot_t *child = node48->children + child_idx - 1;
+    return child;
+}
+
 static inline node_slot_t node256_find_child(node256_t *node256,
                                              unsigned char key,
                                              uint8_t _num_children) {
     return node256->children[key];
+}
+
+static inline node_slot_t *node256_find_child_place(node256_t *node256,
+                                                    unsigned char key,
+                                                    uint8_t _num_children) {
+    return node256->children + key;
 }
 
 static node_slot_t *node4_expand_to_node16(node_slot_t *cur_node_ptr,
@@ -255,6 +289,7 @@ static node_slot_t *node4_expand_to_node16(node_slot_t *cur_node_ptr,
     memcpy(node16->prefix_key, node4->prefix_key, node16->key_len);
     node16->keys[4] = key;
     *cur_node_ptr = ptr_to_slot_num_children(node16, NODE_16, 5);
+    free(node4);
     return node16->children + 4;
 }
 
@@ -275,6 +310,7 @@ static node_slot_t *node16_expand_to_node48(node_slot_t *cur_node_ptr,
     memcpy(node48->prefix_key, node16->prefix_key, node48->key_len);
     node48->keys[key] = 17;
     *cur_node_ptr = ptr_to_slot_num_children(node48, NODE_48, 17);
+    free(node16);
     return node48->children + 16;
 }
 
@@ -294,11 +330,13 @@ static node_slot_t *node48_expand_to_node256(node_slot_t *cur_node_ptr,
     }
     memcpy(node256->prefix_key, node48->prefix_key, node256->key_len);
     *cur_node_ptr = ptr_to_slot_num_children(node256, NODE_256, 49);
+    free(node48);
     return node256->children + (uint8_t)key;
 }
 
 static node_slot_t *node4_find_or_append_child(node_slot_t *cur_node_ptr,
-                                               node4_t *node4,unsigned char key,
+                                               node4_t *node4,
+                                               unsigned char key,
                                                uint8_t num_children) {
     // find child
     for (uint8_t i = 0; i < num_children; ++i) {
@@ -318,7 +356,8 @@ static node_slot_t *node4_find_or_append_child(node_slot_t *cur_node_ptr,
 }
 
 static node_slot_t *node16_find_or_append_child(node_slot_t *cur_node_ptr,
-                                                node16_t *node16, unsigned char key,
+                                                node16_t *node16,
+                                                unsigned char key,
                                                 uint8_t num_children) {
     // find child
     int idx = node16_find_child_idx(node16, key, num_children);
@@ -337,7 +376,8 @@ static node_slot_t *node16_find_or_append_child(node_slot_t *cur_node_ptr,
 }
 
 static node_slot_t *node48_find_or_append_child(node_slot_t *cur_node_ptr,
-                                                node48_t *node48, unsigned char key,
+                                                node48_t *node48,
+                                                unsigned char key,
                                                 uint8_t num_children) {
     // find child
     uint8_t child_idx = node48->keys[key];
@@ -381,6 +421,41 @@ inline void art_init(struct art *art) {
     art->root = 0;
     art->size = 0;
 }
+
+static void free_node(node_slot_t node) {
+    void *raw_ptr = get_raw(node);
+    switch (get_type(node)) {
+    case NODE_VALUE:
+        return;
+    case NODE_1:
+        free_node(((node1_t *)raw_ptr)->child);
+
+        break;
+    case NODE_4:
+        for (int i = 0; i < get_num_children(node); ++i) {
+            free_node(((node4_t *)raw_ptr)->children[i]);
+        }
+        break;
+    case NODE_16:
+        for (int i = 0; i < get_num_children(node); ++i) {
+            free_node(((node16_t *)raw_ptr)->children[i]);
+        }
+        break;
+    case NODE_48:
+        for (int i = 0; i < get_num_children(node); ++i) {
+            free_node(((node48_t *)raw_ptr)->children[i]);
+        }
+        break;
+    case NODE_256:
+        for (int i = 0; i < 256; ++i) {
+            free_node(((node256_t *)raw_ptr)->children[i]);
+        }
+        break;
+    }
+    free(raw_ptr);
+}
+
+void art_free(struct art *art) { free_node(art->root); }
 
 void *art_insert(struct art *restrict art, const char *restrict key,
                  size_t key_len, void *restrict value) {
@@ -465,8 +540,8 @@ FINAL:
 
 #define FIND_CHILD(N)                                                          \
     {                                                                          \
-        cur_node_slot_ptr = node##N##_find_child(                              \
-            raw, *key, get_num_children(cur_node_slot_ptr));                   \
+        cur_node_slot =                                                        \
+            node##N##_find_child(raw, *key, get_num_children(cur_node_slot));  \
         if (key_len) {                                                         \
             ++key;                                                             \
             --key_len;                                                         \
@@ -474,10 +549,10 @@ FINAL:
     }
 
 void *art_get(struct art *art, const char *key, size_t key_len) {
-    for (node_slot_t cur_node_slot_ptr = art->root; cur_node_slot_ptr;) {
-        enum node_type current_type = get_type(cur_node_slot_ptr);
+    for (node_slot_t cur_node_slot = art->root; cur_node_slot;) {
+        enum node_type current_type = get_type(cur_node_slot);
         if (current_type != NODE_VALUE) {
-            const char *prefix_key = get_prefix_key(cur_node_slot_ptr);
+            const char *prefix_key = get_prefix_key(cur_node_slot);
             uint8_t prefix_key_len = get_prefix_key_len(prefix_key);
             if (prefix_key_len > 0) {
                 uint8_t mismatch_idx =
@@ -490,12 +565,12 @@ void *art_get(struct art *art, const char *key, size_t key_len) {
             }
         }
 
-        void *raw = get_raw(cur_node_slot_ptr);
+        void *raw = get_raw(cur_node_slot);
         switch (current_type) {
         case NODE_VALUE:
             return raw;
         case NODE_1:
-            cur_node_slot_ptr = ((node1_t *)raw)->child;
+            cur_node_slot = ((node1_t *)raw)->child;
             break;
         case NODE_4:
             FIND_CHILD(4);
@@ -508,6 +583,63 @@ void *art_get(struct art *art, const char *key, size_t key_len) {
             break;
         case NODE_256:
             FIND_CHILD(256);
+            break;
+        }
+    }
+    return NULL;
+}
+
+#define FIND_CHILD_PLACE(N)                                                    \
+    {                                                                          \
+        cur_node_slot_ptr = node##N##_find_child_place(                        \
+            raw, *key, get_num_children(cur_node_slot));                       \
+        if (key_len) {                                                         \
+            ++key;                                                             \
+            --key_len;                                                         \
+        }                                                                      \
+    }
+
+void *art_delete(struct art *art, const char *key, size_t key_len) {
+    for (node_slot_t *cur_node_slot_ptr = &art->root; *cur_node_slot_ptr;) {
+        enum node_type current_type = get_type(*cur_node_slot_ptr);
+        if (current_type != NODE_VALUE) {
+            const char *prefix_key = get_prefix_key(*cur_node_slot_ptr);
+            uint8_t prefix_key_len = get_prefix_key_len(prefix_key);
+            if (prefix_key_len > 0) {
+                uint8_t mismatch_idx =
+                    key_compare(&key, &key_len, prefix_key, prefix_key_len);
+                if (mismatch_idx < prefix_key_len) {
+                    // prefix_key: [abcde]
+                    //        key: [abxyz] -> [ab][c-slot][x-slot]
+                    return NULL;
+                }
+            }
+        }
+        node_slot_t cur_node_slot = *cur_node_slot_ptr;
+        void *raw = get_raw(cur_node_slot);
+        switch (current_type) {
+        case NODE_VALUE:
+            if (raw) {
+                assert(art->size);
+                --art->size;
+            }
+            void *result = raw;
+            clear_raw(cur_node_slot_ptr);
+            return result;
+        case NODE_1:
+            cur_node_slot_ptr = &((node1_t *)raw)->child;
+            break;
+        case NODE_4:
+            FIND_CHILD_PLACE(4);
+            break;
+        case NODE_16:
+            FIND_CHILD_PLACE(16);
+            break;
+        case NODE_48:
+            FIND_CHILD_PLACE(48);
+            break;
+        case NODE_256:
+            FIND_CHILD_PLACE(256);
             break;
         }
     }

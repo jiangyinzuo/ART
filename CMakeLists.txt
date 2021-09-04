@@ -19,6 +19,8 @@ else ()
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mbmi ")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mbmi ")
 endif ()
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -fsanitize=address -fno-omit-frame-pointer -O1 -g")
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fsanitize=address -fno-omit-frame-pointer -O1 -g")
 
 file(GLOB ART_SRC src/*.c)
 add_library(${PROJECT_NAME} STATIC ${ART_SRC})

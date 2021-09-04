@@ -1,4 +1,5 @@
 // Copyright (c) 2021, Jiang Yinzuo. All rights reserved.
+
 #include "art/art.h"
 #include "gtest/gtest.h"
 
@@ -11,6 +12,7 @@ TEST(ARTTest, Insert0) {
     std::string value;
     value.assign("hello");
     ASSERT_EQ(art_insert(&a, "hello", 5, (void *)value.c_str()), nullptr);
+    art_free(&a);
 }
 
 void insert_and_get(struct art *a, const char *key, uint8_t key_len,
@@ -30,6 +32,7 @@ TEST(ARTTest, Insert1) {
     insert_and_get(&a, "hey", 3, (void *)0x880, nullptr);
     ASSERT_EQ(art_get(&a, "hello", 5), (void *)0x770);
     ASSERT_EQ(art_get(&a, "hey", 3), (void *)0x880);
+    art_free(&a);
 }
 
 TEST(ARTTest, Insert2) {
@@ -39,6 +42,7 @@ TEST(ARTTest, Insert2) {
     insert_and_get(&a, "hello", 5, (void *)0xff00, nullptr);
     insert_and_get(&a, "hello", 5, (void *)0xf200, (void *)0xff00);
     ASSERT_EQ(art_insert(&a, "world", 5, (void *)0xfff0), nullptr);
+    art_free(&a);
 }
 
 TEST(ARTTest, Insert3) {
@@ -47,6 +51,7 @@ TEST(ARTTest, Insert3) {
     insert_and_get(&a, "", 0, (void *)0xf0, nullptr);
     insert_and_get(&a, "abc", 3, (void *)0xe0, nullptr);
     ASSERT_EQ(art_get(&a, "", 0), (void *)0xf0);
+    art_free(&a);
 }
 
 void Insert1(struct art *a) {
@@ -60,6 +65,7 @@ TEST(ARTTest, Insert4) {
     art_init(&a);
     Insert1(&a);
     insert_and_get(&a, "", 0, (void *)0xfff0, nullptr);
+    art_free(&a);
 }
 
 TEST(ARTTest, Insert5) {
@@ -68,6 +74,7 @@ TEST(ARTTest, Insert5) {
     art_insert(&a, "", 0, (void *)0x12370);
     Insert1(&a);
     ASSERT_EQ(art_get(&a, "", 0), (void *)0x12370);
+    art_free(&a);
 }
 
 TEST(ARTTest, Insert6) {
@@ -88,6 +95,7 @@ TEST(ARTTest, Insert6) {
 
     ASSERT_EQ(art_get(&a, "", 0), (void *)0x12370);
     insert_and_get(&a, "ccccc", 5, (void *)0x6660, nullptr);
+    art_free(&a);
 }
 
 TEST(ARTTest, InsertNode4) {
@@ -99,6 +107,7 @@ TEST(ARTTest, InsertNode4) {
     insert_and_get(&a, "", 0, (void *)0x40, (void *)0x30);
     insert_and_get(&a, "wo", 2, (void *)0x50, nullptr);
     insert_and_get(&a, "wo", 2, (void *)0x60, (void *)0x50);
+    art_free(&a);
 }
 
 TEST(ARTTest, InsertNode48) {
@@ -121,6 +130,7 @@ TEST(ARTTest, InsertNode48) {
             ASSERT_EQ(art_get(&a, &key[i][0], 3), (void *)((i + 1) << 8));
         }
     }
+    art_free(&a);
 }
 
 TEST(ARTTest, InsertNode256) {
@@ -144,6 +154,59 @@ TEST(ARTTest, InsertNode256) {
             ASSERT_EQ(art_get(&a, &key[i][0], 3), (void *)((i + 1) << 8));
         }
     }
+    art_free(&a);
+}
+
+TEST(ARTTest, InsertLongKey) {
+    struct art a;
+    art_init(&a);
+    insert_and_get(&a, "abcdefghijklmnopqrstuvwxyz", 26, (void *)0x567800,
+                   nullptr);
+    insert_and_get(&a, "abcdefghijklmnopqrstuvwxyz", 26, (void *)0x888800,
+                   (void *)0x567800);
+    insert_and_get(&a, "abcdEFGHIJKLMNOPQRSTUVWXYZ", 26, (void *)0x7770,
+                   nullptr);
+    ASSERT_EQ(art_get(&a, "abcdefghijklmnopqrstuvwxyz", 26), (void *)0x888800);
+    insert_and_get(&a, "", 0, (void *)0xabcd00, nullptr);
+    ASSERT_EQ(art_get(&a, "abcdefghijklmnopqrstuvwxyz", 26), (void *)0x888800);
+    ASSERT_EQ(a.size, 3);
+    ASSERT_EQ(art_delete(&a, "abcde", 5), nullptr);
+    art_free(&a);
+}
+
+TEST(ARTTest, Delete0) {
+    struct art a;
+    art_init(&a);
+    ASSERT_EQ(art_delete(&a, "", 0), nullptr);
+    insert_and_get(&a, "", 0, (void *)0xabc00, nullptr);
+    insert_and_get(&a, "", 0, (void *)0xabc00, (void *)0xabc00);
+    ASSERT_EQ(art_delete(&a, "", 0), (void *)0xabc00);
+    ASSERT_EQ(art_get(&a, "", 0), nullptr);
+    art_free(&a);
+}
+
+TEST(ARTTest, Delete256) {
+    struct art a;
+    art_init(&a);
+    static char key[256][5];
+    for (unsigned int i = 0; i <= 255; ++i) {
+        key[i][0] = 'a';
+        key[i][1] = 'b';
+        key[i][2] = i;
+        key[i][3] = 'x';
+        key[i][4] = '\0';
+    }
+
+    for (unsigned long i = 0; i < 256; ++i) {
+        insert_and_get(&a, &key[i][0], 4, (void *)((i + 1) << 8), nullptr);
+    }
+    ASSERT_EQ(a.size, 256);
+    for (unsigned long i = 0; i < 256; ++i) {
+        ASSERT_EQ(art_delete(&a, &key[i][0], 4), (void *)((i + 1) << 8));
+        ASSERT_EQ(art_delete(&a, &key[i][0], 4), nullptr);
+    }
+    ASSERT_EQ(a.size, 0);
+    art_free(&a);
 }
 
 } // namespace
