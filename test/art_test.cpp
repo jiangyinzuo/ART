@@ -11,37 +11,50 @@ TEST(ARTTest, Insert0) {
     ASSERT_EQ(a.root, 0);
     std::string value;
     value.assign("hello");
-    ASSERT_EQ(art_insert(&a, "hello", 5, (void *)value.c_str()), nullptr);
+    ASSERT_EQ(art_insert(&a, reinterpret_cast<const unsigned char *>("hello"),
+                         5, (void *)value.c_str()),
+              nullptr);
     art_free(&a);
 }
 
 void insert_and_get(struct art *a, const char *key, uint8_t key_len,
                     void *value, void *expected_insert_result) {
-    ASSERT_EQ(expected_insert_result, art_insert(a, key, key_len, value));
-    ASSERT_EQ(art_get(a, key, key_len), value);
+    ASSERT_EQ(expected_insert_result,
+              art_insert(a, reinterpret_cast<const unsigned char *>(key),
+                         key_len, value));
+    ASSERT_EQ(art_get(a, reinterpret_cast<const unsigned char *>(key), key_len),
+              value);
 }
 
 TEST(ARTTest, Insert1) {
     struct art a;
     art_init(&a);
-    ASSERT_EQ(art_get(&a, "hello", 5), nullptr);
+    ASSERT_EQ(art_get(&a, reinterpret_cast<const unsigned char *>("hello"), 5),
+              nullptr);
     insert_and_get(&a, "hello", 5, nullptr, nullptr);
-    ASSERT_EQ(art_get(&a, "", 0), nullptr);
+    ASSERT_EQ(art_get(&a, reinterpret_cast<const unsigned char *>(""), 0),
+              nullptr);
     insert_and_get(&a, "hello", 5, (void *)0x770, nullptr);
-    ASSERT_EQ(art_get(&a, "hello", 5), (void *)0x770);
+    ASSERT_EQ(art_get(&a, reinterpret_cast<const unsigned char *>("hello"), 5),
+              (void *)0x770);
     insert_and_get(&a, "hey", 3, (void *)0x880, nullptr);
-    ASSERT_EQ(art_get(&a, "hello", 5), (void *)0x770);
-    ASSERT_EQ(art_get(&a, "hey", 3), (void *)0x880);
+    ASSERT_EQ(art_get(&a, reinterpret_cast<const unsigned char *>("hello"), 5),
+              (void *)0x770);
+    ASSERT_EQ(art_get(&a, reinterpret_cast<const unsigned char *>("hey"), 3),
+              (void *)0x880);
     art_free(&a);
 }
 
 TEST(ARTTest, Insert2) {
     struct art a;
     art_init(&a);
-    ASSERT_EQ(art_get(&a, "hello", 5), nullptr);
+    ASSERT_EQ(art_get(&a, reinterpret_cast<const unsigned char *>("hello"), 5),
+              nullptr);
     insert_and_get(&a, "hello", 5, (void *)0xff00, nullptr);
     insert_and_get(&a, "hello", 5, (void *)0xf200, (void *)0xff00);
-    ASSERT_EQ(art_insert(&a, "world", 5, (void *)0xfff0), nullptr);
+    ASSERT_EQ(art_insert(&a, reinterpret_cast<const unsigned char *>("world"),
+                         5, (void *)0xfff0),
+              nullptr);
     art_free(&a);
 }
 
@@ -50,7 +63,8 @@ TEST(ARTTest, Insert3) {
     art_init(&a);
     insert_and_get(&a, "", 0, (void *)0xf0, nullptr);
     insert_and_get(&a, "abc", 3, (void *)0xe0, nullptr);
-    ASSERT_EQ(art_get(&a, "", 0), (void *)0xf0);
+    ASSERT_EQ(art_get(&a, reinterpret_cast<const unsigned char *>(""), 0),
+              (void *)0xf0);
     art_free(&a);
 }
 
@@ -71,16 +85,19 @@ TEST(ARTTest, Insert4) {
 TEST(ARTTest, Insert5) {
     struct art a;
     art_init(&a);
-    art_insert(&a, "", 0, (void *)0x12370);
+    art_insert(&a, reinterpret_cast<const unsigned char *>(""), 0,
+               (void *)0x12370);
     Insert1(&a);
-    ASSERT_EQ(art_get(&a, "", 0), (void *)0x12370);
+    ASSERT_EQ(art_get(&a, reinterpret_cast<const unsigned char *>(""), 0),
+              (void *)0x12370);
     art_free(&a);
 }
 
 TEST(ARTTest, Insert6) {
     struct art a;
     art_init(&a);
-    art_insert(&a, "", 0, (void *)0x12370);
+    art_insert(&a, reinterpret_cast<const unsigned char *>(""), 0,
+               (void *)0x12370);
 
     void *arr[][2] = {{(void *)"aaaaa", (void *)0x1230},
                       {(void *)"bbbbb", (void *)0x1240},
@@ -90,10 +107,15 @@ TEST(ARTTest, Insert6) {
     }
 
     for (auto s : arr) {
-        ASSERT_EQ(art_get(&a, (const char *)s[0], 5), s[1]);
+        ASSERT_EQ(
+            art_get(&a,
+                    reinterpret_cast<const unsigned char *>((const char *)s[0]),
+                    5),
+            s[1]);
     }
 
-    ASSERT_EQ(art_get(&a, "", 0), (void *)0x12370);
+    ASSERT_EQ(art_get(&a, reinterpret_cast<const unsigned char *>(""), 0),
+              (void *)0x12370);
     insert_and_get(&a, "ccccc", 5, (void *)0x6660, nullptr);
     art_free(&a);
 }
@@ -127,7 +149,10 @@ TEST(ARTTest, InsertNode48) {
             ASSERT_EQ(a.size, times ? 48 : i + 1);
         }
         for (unsigned long i = 0; i < 48; ++i) {
-            ASSERT_EQ(art_get(&a, &key[i][0], 3), (void *)((i + 1) << 8));
+            ASSERT_EQ(
+                art_get(&a, reinterpret_cast<const unsigned char *>(&key[i][0]),
+                        3),
+                (void *)((i + 1) << 8));
         }
     }
     art_free(&a);
@@ -151,7 +176,10 @@ TEST(ARTTest, InsertNode256) {
             ASSERT_EQ(a.size, times ? 256 : i + 1);
         }
         for (unsigned long i = 0; i < 256; ++i) {
-            ASSERT_EQ(art_get(&a, &key[i][0], 3), (void *)((i + 1) << 8));
+            ASSERT_EQ(
+                art_get(&a, reinterpret_cast<const unsigned char *>(&key[i][0]),
+                        3),
+                (void *)((i + 1) << 8));
         }
     }
     art_free(&a);
@@ -166,47 +194,83 @@ TEST(ARTTest, InsertLongKey) {
                    (void *)0x567800);
     insert_and_get(&a, "abcdEFGHIJKLMNOPQRSTUVWXYZ", 26, (void *)0x7770,
                    nullptr);
-    ASSERT_EQ(art_get(&a, "abcdefghijklmnopqrstuvwxyz", 26), (void *)0x888800);
+    ASSERT_EQ(art_get(&a,
+                      reinterpret_cast<const unsigned char *>(
+                          "abcdefghijklmnopqrstuvwxyz"),
+                      26),
+              (void *)0x888800);
     insert_and_get(&a, "", 0, (void *)0xabcd00, nullptr);
-    ASSERT_EQ(art_get(&a, "abcdefghijklmnopqrstuvwxyz", 26), (void *)0x888800);
+    ASSERT_EQ(art_get(&a,
+                      reinterpret_cast<const unsigned char *>(
+                          "abcdefghijklmnopqrstuvwxyz"),
+                      26),
+              (void *)0x888800);
     ASSERT_EQ(a.size, 3);
-    ASSERT_EQ(art_delete(&a, "abcde", 5), nullptr);
+    ASSERT_EQ(
+        art_delete(&a, reinterpret_cast<const unsigned char *>("abcde"), 5),
+        nullptr);
     art_free(&a);
 }
 
 TEST(ARTTest, Delete0) {
     struct art a;
     art_init(&a);
-    ASSERT_EQ(art_delete(&a, "", 0), nullptr);
+    ASSERT_EQ(art_delete(&a, reinterpret_cast<const unsigned char *>(""), 0),
+              nullptr);
     insert_and_get(&a, "", 0, (void *)0xabc00, nullptr);
     insert_and_get(&a, "", 0, (void *)0xabc00, (void *)0xabc00);
-    ASSERT_EQ(art_delete(&a, "", 0), (void *)0xabc00);
-    ASSERT_EQ(art_get(&a, "", 0), nullptr);
+    ASSERT_EQ(art_delete(&a, reinterpret_cast<const unsigned char *>(""), 0),
+              (void *)0xabc00);
+    ASSERT_EQ(art_get(&a, reinterpret_cast<const unsigned char *>(""), 0),
+              nullptr);
     art_free(&a);
 }
 
-TEST(ARTTest, Delete256) {
+void Delete(char key[256][5], int tree_size) {
     struct art a;
     art_init(&a);
+    for (unsigned long i = 0; i < tree_size; ++i) {
+        insert_and_get(&a, &key[i][0], 4, (void *)((i + 1) << 8), nullptr);
+    }
+    ASSERT_EQ(a.size, tree_size);
+    ASSERT_NE(a.root, 0);
+    for (unsigned long i = 0; i < tree_size; ++i) {
+        ASSERT_EQ(
+            art_delete(&a, reinterpret_cast<const unsigned char *>(&key[i][0]),
+                       4),
+            (void *)((i + 1) << 8));
+        ASSERT_EQ(
+            art_delete(&a, reinterpret_cast<const unsigned char *>(&key[i][0]),
+                       4),
+            nullptr);
+        ASSERT_EQ(
+            art_get(&a, reinterpret_cast<const unsigned char *>(&key[i][0]),
+                       4),
+            nullptr);
+    }
+    ASSERT_EQ(a.size, 0);
+    ASSERT_EQ(a.root, 0);
+    art_free(&a);
+}
+
+TEST(ARTTest, Delete1) {
     static char key[256][5];
-    for (unsigned int i = 0; i <= 255; ++i) {
+    key[0][0] = 'a';
+    key[0][1] = 'b';
+    key[0][2] = 'g';
+    key[0][3] = 'g';
+    key[0][4] = '\0';
+    for (unsigned int i = 1; i <= 255; ++i) {
         key[i][0] = 'a';
         key[i][1] = 'b';
         key[i][2] = i;
         key[i][3] = 'x';
         key[i][4] = '\0';
     }
-
-    for (unsigned long i = 0; i < 256; ++i) {
-        insert_and_get(&a, &key[i][0], 4, (void *)((i + 1) << 8), nullptr);
-    }
-    ASSERT_EQ(a.size, 256);
-    for (unsigned long i = 0; i < 256; ++i) {
-        ASSERT_EQ(art_delete(&a, &key[i][0], 4), (void *)((i + 1) << 8));
-        ASSERT_EQ(art_delete(&a, &key[i][0], 4), nullptr);
-    }
-    ASSERT_EQ(a.size, 0);
-    art_free(&a);
+    Delete(key, 4);
+    Delete(key, 16);
+    Delete(key, 48);
+    Delete(key, 256);
 }
 
 } // namespace
