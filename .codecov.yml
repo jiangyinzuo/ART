@@ -1,3 +1,14 @@
 coverage:
-  ignore:
-    - build/_deps/
+  status:
+    project:
+      default:
+        # basic
+        target: 90%
+        threshold: 0.1%
+    patch:
+      default:
+        # basic
+        target: 85%
+        threshold: 5%
+    ignore:
+      - build/_deps/

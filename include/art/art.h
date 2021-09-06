@@ -19,22 +19,26 @@ struct art {
     node_slot_t root;
     size_t size;
 };
+struct art;
 
 void art_init(struct art *art);
 
 void art_free(struct art *art);
 
-void *art_insert(struct art *art, const unsigned char *key, size_t key_len, void *value);
+void *art_insert(struct art *art, const unsigned char *key, size_t key_len,
+                 void *value);
 
 void *art_get(struct art *art, const unsigned char *key, size_t key_len);
 
 void *art_delete(struct art *art, const unsigned char *key, size_t key_len);
 
-typedef int (*art_callback)(void *data, const unsigned char *key,
-                            uint32_t key_len, void *value);
+typedef int (*art_iter_value_callback)(void *data, void *value);
 
-int art_iter_prefix(struct art *art, const unsigned char *key, size_t key_len,
-             art_callback cb, void *data);
+int art_iter_value(struct art *art, art_iter_value_callback cb, void *data);
+
+int art_iter_value_prefix(struct art *art, const unsigned char *key,
+                          size_t key_len, art_iter_value_callback cb,
+                          void *data);
 
 #ifdef __cplusplus
 }

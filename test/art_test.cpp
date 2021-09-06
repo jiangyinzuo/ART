@@ -1,5 +1,9 @@
 // Copyright (c) 2021, Jiang Yinzuo. All rights reserved.
 
+#include <fstream>
+#include <map>
+#include <string>
+
 #include "art/art.h"
 #include "gtest/gtest.h"
 
@@ -120,6 +124,48 @@ TEST(ARTTest, Insert6) {
     art_free(&a);
 }
 
+TEST(ARTTest, Insert7) {
+    struct art a;
+    art_init(&a);
+    art_insert(&a, reinterpret_cast<const unsigned char *>(""), 0,
+               (void *)0x6660);
+    ASSERT_EQ(art_get(&a, reinterpret_cast<const unsigned char *>("abc"), 3),
+              nullptr);
+    ASSERT_EQ(art_delete(&a, reinterpret_cast<const unsigned char *>("abc"), 3),
+              nullptr);
+    ASSERT_EQ(art_get(&a, reinterpret_cast<const unsigned char *>(""), 0),
+              (void *)0x6660);
+
+    art_free(&a);
+}
+
+void TestSplitKey(const char *keys[], size_t len) {
+    struct art a;
+    art_init(&a);
+    unsigned long value = 1;
+    for (size_t i = 0; i < len; ++i) {
+        insert_and_get(&a, keys[i], strlen(keys[i]), (void *)(value++ << 8),
+                       nullptr);
+    }
+    value = 1;
+    for (size_t i = 0; i < len; ++i) {
+        ASSERT_EQ(art_get(&a, reinterpret_cast<const unsigned char *>(keys[i]),
+                          strlen(keys[i])),
+                  (void *)(value++ << 8));
+    }
+    art_free(&a);
+}
+
+TEST(ARTTest, SplitPrefixKey) {
+    static const char *keys1[7] = {"hungeringly", "hungerless", "hungerly",
+                                   "hungerproof", "hungerweed", "hungrify",
+                                   "hungrily"};
+    static const char *keys2[4] = {"hungrify", "hungrily", "hungriness",
+                                   "hungry"};
+    TestSplitKey(keys1, 7);
+    TestSplitKey(keys2, 4);
+}
+
 TEST(ARTTest, InsertNode4) {
     struct art a;
     art_init(&a);
@@ -226,6 +272,11 @@ TEST(ARTTest, Delete0) {
     art_free(&a);
 }
 
+int art_count_value_cb(void *data, void *value) {
+    ++(*(uint64_t *)data);
+    return 0;
+}
+
 void Delete(char key[256][5], int tree_size) {
     struct art a;
     art_init(&a);
@@ -234,6 +285,21 @@ void Delete(char key[256][5], int tree_size) {
     }
     ASSERT_EQ(a.size, tree_size);
     ASSERT_NE(a.root, 0);
+    uint64_t count = 0;
+    art_iter_value(&a, art_count_value_cb, &count);
+    ASSERT_EQ(count, tree_size);
+    count = 0;
+    art_iter_value_prefix(&a, reinterpret_cast<const unsigned char *>("a"), 1,
+                          art_count_value_cb, &count);
+    ASSERT_EQ(count, tree_size);
+    count = 0;
+    art_iter_value_prefix(&a, reinterpret_cast<const unsigned char *>("z"), 1,
+                          art_count_value_cb, &count);
+    ASSERT_EQ(count, 0);
+    art_iter_value_prefix(&a, reinterpret_cast<const unsigned char *>("xz"), 1,
+                          art_count_value_cb, &count);
+    ASSERT_EQ(count, 0);
+
     for (unsigned long i = 0; i < tree_size; ++i) {
         ASSERT_EQ(
             art_delete(&a, reinterpret_cast<const unsigned char *>(&key[i][0]),
@@ -244,8 +310,7 @@ void Delete(char key[256][5], int tree_size) {
                        4),
             nullptr);
         ASSERT_EQ(
-            art_get(&a, reinterpret_cast<const unsigned char *>(&key[i][0]),
-                       4),
+            art_get(&a, reinterpret_cast<const unsigned char *>(&key[i][0]), 4),
             nullptr);
     }
     ASSERT_EQ(a.size, 0);
@@ -254,23 +319,95 @@ void Delete(char key[256][5], int tree_size) {
 }
 
 TEST(ARTTest, Delete1) {
-    static char key[256][5];
-    key[0][0] = 'a';
-    key[0][1] = 'b';
-    key[0][2] = 'g';
-    key[0][3] = 'g';
-    key[0][4] = '\0';
+    static char keys1[256][5];
+    static char keys2[455][5];
+    keys1[0][0] = keys2[0][0] = 'a';
+    keys1[0][1] = keys2[0][1] = 'b';
+    keys1[0][2] = keys2[0][1] = 'g';
+    keys1[0][3] = keys2[0][1] = 'g';
+    keys1[0][4] = keys2[0][1] = '\0';
     for (unsigned int i = 1; i <= 255; ++i) {
-        key[i][0] = 'a';
-        key[i][1] = 'b';
-        key[i][2] = i;
-        key[i][3] = 'x';
-        key[i][4] = '\0';
+        keys1[i][0] = keys2[i][0] = 'a';
+        keys1[i][1] = keys2[i][1] = 'b';
+        keys1[i][2] = keys2[i][2] = i;
+        keys1[i][3] = keys2[i][3] = 'x';
+        keys1[i][4] = keys2[i][4] = '\0';
     }
-    Delete(key, 4);
-    Delete(key, 16);
-    Delete(key, 48);
-    Delete(key, 256);
+    for (unsigned int i = 256; i < 455; ++i) {
+        keys2[i][0] = 'a';
+        keys2[i][1] = i - 255;
+        keys2[i][2] = i - 255;
+        keys2[i][3] = 'z';
+        keys2[i][4] = '\0';
+    }
+
+    Delete(keys1, 4);
+    Delete(keys1, 16);
+    Delete(keys1, 48);
+    Delete(keys1, 256);
+    Delete(keys2, 455);
+}
+
+TEST(ARTTest, IterValuePrefixWords0) {
+    struct art a;
+    art_init(&a);
+
+    std::ifstream f("test_data/words0.txt");
+    std::map<std::string, void *> m;
+    unsigned long line = 0;
+    uint64_t expected_hu_count = 0, expected_a_count = 0;
+    while (f.peek() != EOF) {
+        std::string buf;
+        f >> buf;
+
+        if (strncmp(buf.c_str(), "hu", 2) == 0) {
+            ++expected_hu_count;
+        } else if (strncmp(buf.c_str(), "a", 1) == 0) {
+            ++expected_a_count;
+        }
+
+        insert_and_get(&a, buf.c_str(), buf.size(), (void *)((++line) << 8),
+                       nullptr);
+
+        std::map<std::string, void *> fail_map;
+        m[buf] = reinterpret_cast<void *>(line << 8);
+        for (auto &[k, v] : m) {
+            std::cout << k << " " << v << '\n';
+            void *result =
+                art_get(&a, reinterpret_cast<const unsigned char *>(k.c_str()),
+                        k.size());
+            if (result != v) {
+                fail_map[k] = result;
+            }
+        }
+        if (!fail_map.empty()) {
+            std::cout << "after inserting " << buf << ", " << fail_map.size()
+                      << " failed!!" << '\n';
+            for (auto &[fk, fv] : fail_map) {
+                std::cout << ' ' << fk << ' ' << fv << '\n';
+            }
+            FAIL();
+        }
+        std::cout << "-------" << std::endl;
+    }
+    ASSERT_EQ(line, a.size);
+
+    uint64_t actual_hu_count = 0;
+    art_iter_value_prefix(&a, reinterpret_cast<const unsigned char *>("hu"), 2,
+                          art_count_value_cb, &actual_hu_count);
+    ASSERT_EQ(expected_hu_count, actual_hu_count);
+
+    uint64_t actual_a_count = 0;
+    art_iter_value_prefix(&a, reinterpret_cast<const unsigned char *>("a"), 2,
+                          art_count_value_cb, &actual_a_count);
+    ASSERT_EQ(expected_hu_count, actual_hu_count);
+
+    uint64_t count = 0;
+    art_iter_value(&a, art_count_value_cb, &count);
+    ASSERT_EQ(count, m.size());
+
+    f.close();
+    art_free(&a);
 }
 
 } // namespace

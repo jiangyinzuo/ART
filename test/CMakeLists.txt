@@ -17,6 +17,7 @@ FetchContent_MakeAvailable(googletest)
 
 # Add test executables
 file(GLOB ART_TEST_SOURCES "${PROJECT_SOURCE_DIR}/test/*test.cpp")
+file(COPY test_data DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 
 foreach (art_test_source ${ART_TEST_SOURCES})
     # Create a human readable name.

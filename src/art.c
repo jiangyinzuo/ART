@@ -118,12 +118,13 @@ static inline void dec_prefix_key_len(unsigned char *prefix_key, uint8_t len) {
 
 static node1_t *new_node1(const unsigned char *prefix_key,
                           uint8_t prefix_key_len, node_slot_t child) {
-    node1_t *node_ptr = malloc(sizeof(node1_t) + prefix_key_len);
-    assert(((uint64_t)node_ptr & TYPE_MASK) == 0);
-    node_ptr->child = child;
-    node_ptr->key_len = prefix_key_len;
-    memcpy(node_ptr->prefix_key, prefix_key, prefix_key_len);
-    return node_ptr;
+    assert(prefix_key_len);
+    node1_t *node1 = malloc(sizeof(node1_t) + prefix_key_len);
+    assert(((uint64_t)node1 & TYPE_MASK) == 0);
+    node1->child = child;
+    node1->key_len = prefix_key_len;
+    memcpy(node1->prefix_key, prefix_key, prefix_key_len);
+    return node1;
 }
 
 static void new_node1_or_assign_node_value(node_slot_t **cur_node_slot_ptr,
@@ -175,7 +176,9 @@ static void split_prefix_key_to_node4(node_slot_t **cur_node_slot_ptr,
     node1_t *old_node1;
     _Bool free_old_node1 = 0;
     if (UNLIKELY(prefix_key_len <= common_prefix_key_len + 1 &&
-                 get_type(old_node))) {
+                 get_type(old_node) == NODE_1)) {
+        // The "old_node" is NODE_1 and after splitting its "prefix_key_len" is 0.
+        // Then we free node1 and "old_node" becomes "old_node1"'s child
         old_node1 = (node1_t *)get_raw(old_node);
         old_node = old_node1->child;
         free_old_node1 = 1;
@@ -552,7 +555,7 @@ void *art_get(struct art *art, const unsigned char *key, size_t key_len) {
         void *raw = get_raw(cur_node_slot);
         switch (current_type) {
         case NODE_VALUE:
-            return raw;
+            return key_len ? NULL : raw;
         case NODE_1:
             cur_node_slot = ((node1_t *)raw)->child;
             break;
@@ -712,6 +715,9 @@ void *recursive_delete(const unsigned char *key, size_t key_len,
     void *raw = get_raw(*cur_node_slot_ptr);
     switch (cur_type) {
     case NODE_VALUE:
+        if (key_len) {
+            return NULL;
+        }
         clear_raw(cur_node_slot_ptr);
         return raw;
     case NODE_1: {
@@ -827,4 +833,121 @@ void *art_delete(struct art *art, const unsigned char *key, size_t key_len) {
     void *result = recursive_delete(key, key_len, cur_node_slot_ptr);
     art->size -= (result != NULL);
     return result;
+}
+
+static int recursive_iter_value(node_slot_t cur_node_slot,
+                                art_iter_value_callback cb, void *data) {
+    assert(cur_node_slot);
+    void *raw = get_raw(cur_node_slot);
+    switch (get_type(cur_node_slot)) {
+    case NODE_VALUE:
+        return cb(data, raw);
+    case NODE_1:
+        return recursive_iter_value(((node1_t *)raw)->child, cb, data);
+    case NODE_4: {
+        uint8_t num_children = get_num_children(cur_node_slot);
+        for (int i = 0; i < num_children; ++i) {
+            int res =
+                recursive_iter_value(((node4_t *)raw)->children[i], cb, data);
+            if (res) {
+                return res;
+            }
+        }
+        return 0;
+    }
+    case NODE_16: {
+        uint8_t num_children = get_num_children(cur_node_slot);
+        for (int i = 0; i < num_children; ++i) {
+            int res =
+                recursive_iter_value(((node16_t *)raw)->children[i], cb, data);
+            if (res) {
+                return res;
+            }
+        }
+        return 0;
+    }
+    case NODE_48: {
+        uint64_t bitmap_rev = ~((node48_t *)raw)->bitmap;
+        for (unsigned long base = 0; bitmap_rev; ++base) {
+            unsigned long idx = _tzcnt_u64(bitmap_rev);
+            bitmap_rev >>= idx + 1;
+            base += idx;
+            assert(((node48_t *)raw)->children[base]);
+            int res = recursive_iter_value(((node48_t *)raw)->children[base],
+                                           cb, data);
+            if (res) {
+                return res;
+            }
+        }
+        return 0;
+    }
+    case NODE_256:
+        for (unsigned int i = 0; i < 256; ++i) {
+            if (((node256_t *)raw)->children[i]) {
+                int res = recursive_iter_value(((node256_t *)raw)->children[i],
+                                               cb, data);
+                if (res) {
+                    return res;
+                }
+            }
+        }
+        return 0;
+    }
+}
+
+int art_iter_value(struct art *art, art_iter_value_callback cb, void *data) {
+    return art->root ? recursive_iter_value(art->root, cb, data) : 0;
+}
+
+int art_iter_value_prefix(struct art *art, const unsigned char *key,
+                          size_t key_len, art_iter_value_callback cb,
+                          void *data) {
+    for (node_slot_t cur_node_slot = art->root; cur_node_slot;) {
+        if (key_len == 0) {
+            return recursive_iter_value(cur_node_slot, cb, data);
+        }
+
+        enum node_type current_type = get_type(cur_node_slot);
+        if (current_type != NODE_VALUE) {
+            const unsigned char *prefix_key = get_prefix_key(cur_node_slot);
+            uint8_t prefix_key_len = get_prefix_key_len(prefix_key);
+            if (prefix_key_len > 0) {
+                uint8_t mismatch_idx =
+                    key_compare(&key, &key_len, prefix_key, prefix_key_len);
+                // prefix_key: [abcde]
+                //        key: [abc]
+                //        "key_len" will be 0 and go on finding child
+                if (mismatch_idx < prefix_key_len && *key) {
+                    // prefix_key: [abcde]
+                    //        key: [abxyz] -> [ab][c-slot][x-slot]
+                    return 0;
+                }
+            }
+        }
+
+        if (key_len == 0) {
+            return recursive_iter_value(cur_node_slot, cb, data);
+        }
+
+        void *raw = get_raw(cur_node_slot);
+        switch (current_type) {
+        case NODE_VALUE:
+            return key_len ? 0 : cb(raw, data);
+        case NODE_1:
+            cur_node_slot = ((node1_t *)raw)->child;
+            break;
+        case NODE_4:
+            FIND_CHILD(4);
+            break;
+        case NODE_16:
+            FIND_CHILD(16);
+            break;
+        case NODE_48:
+            FIND_CHILD(48);
+            break;
+        case NODE_256:
+            FIND_CHILD(256);
+            break;
+        }
+    }
 }
