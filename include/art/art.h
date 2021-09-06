@@ -19,7 +19,6 @@ struct art {
     node_slot_t root;
     size_t size;
 };
-struct art;
 
 void art_init(struct art *art);
 
@@ -31,6 +30,10 @@ void *art_insert(struct art *art, const unsigned char *key, size_t key_len,
 void *art_get(struct art *art, const unsigned char *key, size_t key_len);
 
 void *art_delete(struct art *art, const unsigned char *key, size_t key_len);
+
+typedef int(*art_iter_callback)(void *data, const unsigned char *key, uint32_t key_len, void *value);
+
+int art_iter(struct art *art, art_iter_callback cb, void *data);
 
 typedef int (*art_iter_value_callback)(void *data, void *value);
 

@@ -272,6 +272,11 @@ TEST(ARTTest, Delete0) {
     art_free(&a);
 }
 
+int art_count_cb(void *data, const unsigned char *key, uint32_t key_len, void *value) {
+    ++(*(uint64_t *)data);
+    return 0;
+}
+
 int art_count_value_cb(void *data, void *value) {
     ++(*(uint64_t *)data);
     return 0;
@@ -285,9 +290,17 @@ void Delete(char key[256][5], int tree_size) {
     }
     ASSERT_EQ(a.size, tree_size);
     ASSERT_NE(a.root, 0);
+
+    // test iter value
     uint64_t count = 0;
     art_iter_value(&a, art_count_value_cb, &count);
     ASSERT_EQ(count, tree_size);
+
+    // test iter
+    count = 0;
+    art_iter(&a, art_count_cb, &count);
+    ASSERT_EQ(count, tree_size);
+
     count = 0;
     art_iter_value_prefix(&a, reinterpret_cast<const unsigned char *>("a"), 1,
                           art_count_value_cb, &count);
