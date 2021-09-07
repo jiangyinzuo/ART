@@ -4,11 +4,11 @@ coverage:
       default:
         # basic
         target: 90%
-        threshold: 0.1%
+        threshold: 20%
     patch:
       default:
         # basic
         target: 85%
-        threshold: 5%
+        threshold: 20%
     ignore:
       - build/_deps/

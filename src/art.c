@@ -442,7 +442,7 @@ static void free_node(node_slot_t node) {
 
 void art_free(struct art *art) { free_node(art->root); }
 
-void *art_insert(struct art *restrict art, const unsigned char *restrict key,
+void *art_insert(struct art *restrict art, const unsigned char *key,
                  size_t key_len, void *restrict value) {
     if (UNLIKELY(value == NULL)) {
         return NULL;
@@ -837,9 +837,11 @@ void *art_delete(struct art *art, const unsigned char *key, size_t key_len) {
 }
 
 #define APPEND_KEY(N)                                                          \
-    size_t append_key_len = ((node##N##_t *)raw)->key_len + 1;                 \
+    size_t append_key_len = ((node##N##_t *)raw)->key_len + (k != '\0');       \
     art_stack_append(key_stack, ((node##N##_t *)raw)->prefix_key,              \
-                     append_key_len);
+                     ((node##N##_t *)raw)->key_len);                           \
+    if (k)                                                                     \
+        art_stack_push(key_stack, (unsigned char)k);
 
 static int recursive_iter(node_slot_t cur_node_slot, art_stack *key_stack,
                           art_iter_callback cb, void *data) {
@@ -858,6 +860,7 @@ static int recursive_iter(node_slot_t cur_node_slot, art_stack *key_stack,
     case NODE_4: {
         uint8_t num_children = get_num_children(cur_node_slot);
         for (int i = 0; i < num_children; ++i) {
+            unsigned char k = ((node4_t *)raw)->keys[i];
             APPEND_KEY(4);
             int res = recursive_iter(((node4_t *)raw)->children[i], key_stack,
                                      cb, data);
@@ -871,8 +874,10 @@ static int recursive_iter(node_slot_t cur_node_slot, art_stack *key_stack,
     case NODE_16: {
         uint8_t num_children = get_num_children(cur_node_slot);
         for (int i = 0; i < num_children; ++i) {
+            unsigned char k = ((node16_t *)raw)->keys[i];
             APPEND_KEY(16);
-            int res = recursive_iter(((node16_t *)raw)->children[i], key_stack, cb, data);
+            int res = recursive_iter(((node16_t *)raw)->children[i], key_stack,
+                                     cb, data);
             art_stack_popn(key_stack, append_key_len);
             if (res) {
                 return res;
@@ -881,28 +886,26 @@ static int recursive_iter(node_slot_t cur_node_slot, art_stack *key_stack,
         return 0;
     }
     case NODE_48: {
-        uint64_t bitmap_rev = ~((node48_t *)raw)->bitmap;
-        // "i" is base
-        for (unsigned long i = 0; bitmap_rev; ++i) {
-            unsigned long idx = _tzcnt_u64(bitmap_rev);
-            bitmap_rev >>= idx + 1;
-            i += idx;
-            assert(((node48_t *)raw)->children[i]);
-            APPEND_KEY(48);
-            int res = recursive_iter(((node48_t *)raw)->children[i],
-                                     key_stack, cb, data);
-            art_stack_popn(key_stack, append_key_len);
-            if (res) {
-                return res;
+        const node48_t *node48 = (node48_t *)raw;
+        for (unsigned int k = 0; k < 256; ++k) {
+            uint8_t child_idx = node48->keys[k];
+            if (child_idx) {
+                APPEND_KEY(48);
+                int res = recursive_iter(((node48_t *)raw)->children[child_idx],
+                                         key_stack, cb, data);
+                art_stack_popn(key_stack, append_key_len);
+                if (res) {
+                    return res;
+                }
             }
         }
         return 0;
     }
     case NODE_256:
-        for (unsigned int i = 0; i < 256; ++i) {
-            if (((node256_t *)raw)->children[i]) {
+        for (unsigned int k = 0; k < 256; ++k) {
+            if (((node256_t *)raw)->children[k]) {
                 APPEND_KEY(256);
-                int res = recursive_iter(((node256_t *)raw)->children[i],
+                int res = recursive_iter(((node256_t *)raw)->children[k],
                                          key_stack, cb, data);
                 art_stack_popn(key_stack, append_key_len);
                 if (res) {
@@ -924,6 +927,86 @@ int art_iter(struct art *art, art_iter_callback cb, void *data) {
         return result;
     }
     return 0;
+}
+
+#define FIND_CHILD_PUSH_KEY(N)                                                 \
+    {                                                                          \
+        cur_node_slot =                                                        \
+            node##N##_find_child(raw, *key, get_num_children(cur_node_slot));  \
+        if (key_len) {                                                         \
+            art_stack_push(&key_stack, *key);                                  \
+            ++key;                                                             \
+            --key_len;                                                         \
+        }                                                                      \
+    }
+
+int art_iter_prefix(struct art *art, const unsigned char *key, size_t key_len,
+                    art_iter_callback cb, void *data) {
+#ifndef NDEBUG
+    size_t expected_key_len = key_len;
+#endif
+
+    art_stack key_stack;
+    art_stack_init(&key_stack);
+    int res = 0;
+    for (node_slot_t cur_node_slot = art->root; cur_node_slot;) {
+        if (key_len == 0) {
+            assert(expected_key_len == key_stack.items);
+            res = recursive_iter(cur_node_slot, &key_stack, cb, data);
+            goto FINAL;
+        }
+
+        enum node_type current_type = get_type(cur_node_slot);
+        if (current_type != NODE_VALUE) {
+            const unsigned char *prefix_key = get_prefix_key(cur_node_slot);
+            uint8_t prefix_key_len = get_prefix_key_len(prefix_key);
+            if (prefix_key_len > 0) {
+                uint8_t mismatch_idx =
+                    key_compare(&key, &key_len, prefix_key, prefix_key_len);
+                // prefix_key: [abcde]
+                //        key: [abc]
+                //        "key_len" will be 0 and go on finding child
+                if (mismatch_idx < prefix_key_len && *key) {
+                    // prefix_key: [abcde]
+                    //        key: [abxyz] -> [ab][c-slot][x-slot]
+                    goto FINAL;
+                }
+                art_stack_append(&key_stack, prefix_key, mismatch_idx);
+            }
+        }
+
+        if (key_len == 0) {
+            assert(expected_key_len == key_stack.items);
+            res = recursive_iter(cur_node_slot, &key_stack, cb, data);
+            goto FINAL;
+        }
+
+        void *raw = get_raw(cur_node_slot);
+        switch (current_type) {
+        case NODE_VALUE:
+            assert(expected_key_len == key_stack.items);
+            res = key_len ? 0 : cb(data, key_stack.stack, key_stack.items, raw);
+            goto FINAL;
+        case NODE_1:
+            cur_node_slot = ((node1_t *)raw)->child;
+            break;
+        case NODE_4:
+            FIND_CHILD_PUSH_KEY(4);
+            break;
+        case NODE_16:
+            FIND_CHILD_PUSH_KEY(16);
+            break;
+        case NODE_48:
+            FIND_CHILD_PUSH_KEY(48);
+            break;
+        case NODE_256:
+            FIND_CHILD_PUSH_KEY(256);
+            break;
+        }
+    }
+FINAL:
+    art_stack_free(&key_stack);
+    return res;
 }
 
 static int recursive_iter_value(node_slot_t cur_node_slot,
@@ -1023,7 +1106,7 @@ int art_iter_value_prefix(struct art *art, const unsigned char *key,
         void *raw = get_raw(cur_node_slot);
         switch (current_type) {
         case NODE_VALUE:
-            return key_len ? 0 : cb(raw, data);
+            return key_len ? 0 : cb(data, raw);
         case NODE_1:
             cur_node_slot = ((node1_t *)raw)->child;
             break;
@@ -1041,4 +1124,5 @@ int art_iter_value_prefix(struct art *art, const unsigned char *key,
             break;
         }
     }
+    return 0;
 }

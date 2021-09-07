@@ -17,4 +17,4 @@ TEST(StackTest, PushPop) {
     art_stack_free(&stack);
 }
 
-}
+} // namespace

@@ -88,7 +88,7 @@ bool art_stack_push(art_stack *ts, art_stack_elem ptr) {
     return true;
 }
 
-bool art_stack_append(art_stack *ts, art_stack_elem *elems, size_t len) {
+bool art_stack_append(art_stack *ts, const art_stack_elem *elems, size_t len) {
     if (ts->items + len > ts->maxitems) {
         ts->maxitems = (ts->items + len) * 2;
         if (ts->stack == ts->static_items) {

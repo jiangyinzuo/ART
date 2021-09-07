@@ -63,7 +63,7 @@ void art_stack_init(art_stack *ts);
 /* Push an item into the stack, returns true on success, false on out of memory. */
 bool art_stack_push(art_stack *ts, art_stack_elem elem);
 
-bool art_stack_append(art_stack *ts, art_stack_elem *elems, size_t len);
+bool art_stack_append(art_stack *ts, const art_stack_elem *elems, size_t len);
 
 /* Pop an item from the stack, the function returns NULL if there are no
  * items to pop. */

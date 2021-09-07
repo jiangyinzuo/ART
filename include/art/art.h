@@ -13,6 +13,13 @@ extern "C" {
 #define MAX_PREFIX_KEY_LEN 8
 #endif
 
+/**
+ * tagged pointer
+ *
+ * | num_children |    raw     |   type  |
+ * +--------------+------------+---------+
+ * |    4bits     |  57bits    |  3bits  |
+ */
 typedef uint64_t node_slot_t;
 
 struct art {
@@ -31,9 +38,13 @@ void *art_get(struct art *art, const unsigned char *key, size_t key_len);
 
 void *art_delete(struct art *art, const unsigned char *key, size_t key_len);
 
-typedef int(*art_iter_callback)(void *data, const unsigned char *key, uint32_t key_len, void *value);
+typedef int (*art_iter_callback)(void *data, const unsigned char *key,
+                                 uint32_t key_len, void *value);
 
 int art_iter(struct art *art, art_iter_callback cb, void *data);
+
+int art_iter_prefix(struct art *art, const unsigned char *key, size_t key_len,
+                    art_iter_callback cb, void *data);
 
 typedef int (*art_iter_value_callback)(void *data, void *value);
 

@@ -2,6 +2,7 @@
 
 #include <fstream>
 #include <map>
+#include <random>
 #include <string>
 
 #include "art/art.h"
@@ -272,8 +273,12 @@ TEST(ARTTest, Delete0) {
     art_free(&a);
 }
 
-int art_count_cb(void *data, const unsigned char *key, uint32_t key_len, void *value) {
+int art_count_cb(void *data, const unsigned char *key, uint32_t key_len,
+                 void *value) {
     ++(*(uint64_t *)data);
+    fwrite(key, key_len, 1, stdout);
+    putc(' ', stdout);
+    printf("%d\n", key_len);
     return 0;
 }
 
@@ -361,7 +366,7 @@ TEST(ARTTest, Delete1) {
     Delete(keys2, 455);
 }
 
-TEST(ARTTest, IterValuePrefixWords0) {
+TEST(ARTTest, IterPrefixWords0) {
     struct art a;
     art_init(&a);
 
@@ -405,6 +410,7 @@ TEST(ARTTest, IterValuePrefixWords0) {
     }
     ASSERT_EQ(line, a.size);
 
+    // test iter value prefix
     uint64_t actual_hu_count = 0;
     art_iter_value_prefix(&a, reinterpret_cast<const unsigned char *>("hu"), 2,
                           art_count_value_cb, &actual_hu_count);
@@ -419,8 +425,70 @@ TEST(ARTTest, IterValuePrefixWords0) {
     art_iter_value(&a, art_count_value_cb, &count);
     ASSERT_EQ(count, m.size());
 
+    // test iter prefix
+    actual_hu_count = 0;
+    art_iter_prefix(&a, reinterpret_cast<const unsigned char *>("hu"), 2,
+                    art_count_cb, &actual_hu_count);
+    ASSERT_EQ(expected_hu_count, actual_hu_count);
+
+    actual_a_count = 0;
+    art_iter_prefix(&a, reinterpret_cast<const unsigned char *>("a"), 2,
+                    art_count_cb, &actual_a_count);
+    ASSERT_EQ(expected_hu_count, actual_hu_count);
+
+    count = 0;
+    art_iter(&a, art_count_cb, &count);
+    ASSERT_EQ(count, m.size());
+
     f.close();
     art_free(&a);
+}
+
+class Random {
+  public:
+    Random() : device_() { generator_.seed(device_()); }
+
+    std::string RandString() {
+        std::uniform_int_distribution d(1, 255);
+        size_t str_len = d(generator_);
+        std::string result(str_len, '\0');
+        for (auto &c : result) {
+            c = d(generator_);
+        }
+        return result;
+    }
+
+  private:
+    std::random_device device_;
+    std::mt19937 generator_;
+};
+
+void TestRandom() {
+    struct art a;
+    art_init(&a);
+    Random rd;
+    std::unordered_map<std::string, void *> m;
+    for (unsigned long i = 0; i < 2000; ++i) {
+        std::string rand_str = rd.RandString();
+        void *value = (void *)((i + 1) << 8);
+        insert_and_get(&a, rand_str.c_str(), rand_str.size(), value,
+                       m[rand_str]);
+        m[rand_str] = value;
+    }
+    for (auto &[k, v] : m) {
+        ASSERT_EQ(art_get(&a,
+                          reinterpret_cast<const unsigned char *>(k.c_str()),
+                          k.size()),
+                  v);
+    }
+    ASSERT_EQ(a.size, m.size());
+    art_free(&a);
+}
+
+TEST(ARTTest, Random) {
+    for (int i = 0; i < 100; ++i) {
+        TestRandom();
+    }
 }
 
 } // namespace
