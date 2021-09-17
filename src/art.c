@@ -577,8 +577,7 @@ void *art_get(struct art *art, const unsigned char *key, size_t key_len) {
     return NULL;
 }
 
-static inline void node1_remove_child(node_slot_t *cur_node_slot_ptr, void *raw,
-                                      const node_slot_t *childptr) {
+static inline void node1_remove_child(node_slot_t *cur_node_slot_ptr, void *raw) {
     free(raw);
     // set to null
     *cur_node_slot_ptr = 0;
@@ -628,7 +627,7 @@ static void node48_remove_child(node_slot_t *cur_node_slot_ptr,
         memcpy(node16->prefix_key, node48->prefix_key, node16->key_len);
         int cnt = 0;
         for (unsigned int i = 0; i <= 255; ++i) {
-            if (node48->keys[i]) {
+            if (UNLIKELY(node48->keys[i])) {
                 node16->keys[cnt] = i;
                 node16->children[cnt] = node48->children[node48->keys[i] - 1];
                 ++cnt;
@@ -719,6 +718,7 @@ void *recursive_delete(const unsigned char *key, size_t key_len,
         if (key_len) {
             return NULL;
         }
+        assert(*key == '\0');
         clear_raw(cur_node_slot_ptr);
         return raw;
     case NODE_1: {
@@ -726,15 +726,16 @@ void *recursive_delete(const unsigned char *key, size_t key_len,
         assert(*childptr);
         enum node_type child_type = get_type(*childptr);
         if (key_len == 0) {
+            assert(*key == '\0');
             if (child_type == NODE_VALUE) {
                 void *result = get_raw(*childptr);
-                node1_remove_child(cur_node_slot_ptr, raw, childptr);
+                node1_remove_child(cur_node_slot_ptr, raw);
                 return result;
             }
         } else if (child_type != NODE_VALUE) {
             void *result = recursive_delete(key, key_len, childptr);
             if (*childptr == 0) {
-                node1_remove_child(cur_node_slot_ptr, raw, childptr);
+                node1_remove_child(cur_node_slot_ptr, raw);
             }
             return result;
         }
@@ -827,6 +828,7 @@ void *recursive_delete(const unsigned char *key, size_t key_len,
         }
     }
     }
+    return NULL;
 }
 
 void *art_delete(struct art *art, const unsigned char *key, size_t key_len) {

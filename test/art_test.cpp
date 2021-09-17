@@ -154,6 +154,14 @@ void TestSplitKey(const char *keys[], size_t len) {
                           strlen(keys[i])),
                   (void *)(value++ << 8));
     }
+    value = 1;
+    for (size_t i = 0; i < len; ++i) {
+        ASSERT_EQ(art_delete(&a,
+                             reinterpret_cast<const unsigned char *>(keys[i]),
+                             strlen(keys[i])),
+                  (void *)(value++ << 8));
+    }
+
     art_free(&a);
 }
 
@@ -176,6 +184,14 @@ TEST(ARTTest, InsertNode4) {
     insert_and_get(&a, "", 0, (void *)0x40, (void *)0x30);
     insert_and_get(&a, "wo", 2, (void *)0x50, nullptr);
     insert_and_get(&a, "wo", 2, (void *)0x60, (void *)0x50);
+    ASSERT_EQ(
+        art_delete(&a, reinterpret_cast<const unsigned char *>("world"), 5),
+        (void *)0x10);
+    ASSERT_EQ(
+        art_delete(&a, reinterpret_cast<const unsigned char *>("wolf"), 4),
+        (void *)0x20);
+    ASSERT_EQ(art_delete(&a, reinterpret_cast<const unsigned char *>(""), 0),
+              (void *)0x40);
     art_free(&a);
 }
 
@@ -229,6 +245,13 @@ TEST(ARTTest, InsertNode256) {
                 (void *)((i + 1) << 8));
         }
     }
+    for (unsigned long i = 0; i < 256; ++i) {
+        ASSERT_EQ(
+            art_delete(&a, reinterpret_cast<const unsigned char *>(&key[i][0]),
+                       3),
+            (void *)((i + 1) << 8));
+    }
+    ASSERT_EQ(a.size, 0);
     art_free(&a);
 }
 
@@ -482,6 +505,13 @@ void TestRandom() {
                   v);
     }
     ASSERT_EQ(a.size, m.size());
+    // FIXME
+//    for (auto &[k, v] : m) {
+//        ASSERT_EQ(art_delete(&a,
+//                             reinterpret_cast<const unsigned char *>(k.c_str()),
+//                             k.size()),
+//                  v);
+//    }
     art_free(&a);
 }
 
