@@ -577,7 +577,8 @@ void *art_get(struct art *art, const unsigned char *key, size_t key_len) {
     return NULL;
 }
 
-static inline void node1_remove_child(node_slot_t *cur_node_slot_ptr, void *raw) {
+static inline void node1_remove_child(node_slot_t *cur_node_slot_ptr,
+                                      void *raw) {
     free(raw);
     // set to null
     *cur_node_slot_ptr = 0;
@@ -675,22 +676,24 @@ static void node256_remove_child(node_slot_t *cur_node_slot_ptr,
             --key_len;                                                         \
         }                                                                      \
         enum node_type child_type = get_type(node##N->children[idx]);          \
-        if (key_len == 0) {                                                    \
-            if (child_type == NODE_VALUE) {                                    \
-                void *result = get_raw(node##N->children[idx]);                \
-                node##N##_remove_child(cur_node_slot_ptr, node##N, idx,        \
-                                       num_children);                          \
-                return result;                                                 \
+        if (child_type == NODE_VALUE) {                                        \
+            if (key_len > 0) {                                                 \
+                assert(*key);                                                  \
+                return NULL;                                                   \
             }                                                                  \
-        } else if (child_type != NODE_VALUE) {                                 \
-            void *result =                                                     \
-                recursive_delete(key, key_len, &node##N->children[idx]);       \
-            if (node##N->children[idx] == 0) {                                 \
-                node##N##_remove_child(cur_node_slot_ptr, node##N, idx,        \
-                                       num_children);                          \
-            }                                                                  \
+            void *result = get_raw(node##N->children[idx]);                    \
+            node##N##_remove_child(cur_node_slot_ptr, node##N, idx,            \
+                                   num_children);                              \
             return result;                                                     \
         }                                                                      \
+                                                                               \
+        void *result =                                                         \
+            recursive_delete(key, key_len, &node##N->children[idx]);           \
+        if (node##N->children[idx] == 0) {                                     \
+            node##N##_remove_child(cur_node_slot_ptr, node##N, idx,            \
+                                   num_children);                              \
+        }                                                                      \
+        return result;                                                         \
     }
 
 void *recursive_delete(const unsigned char *key, size_t key_len,
@@ -725,21 +728,20 @@ void *recursive_delete(const unsigned char *key, size_t key_len,
         node_slot_t *childptr = &((node1_t *)raw)->child;
         assert(*childptr);
         enum node_type child_type = get_type(*childptr);
-        if (key_len == 0) {
+
+        if (child_type == NODE_VALUE) {
+            if (key_len > 0)
+                return NULL;
             assert(*key == '\0');
-            if (child_type == NODE_VALUE) {
-                void *result = get_raw(*childptr);
-                node1_remove_child(cur_node_slot_ptr, raw);
-                return result;
-            }
-        } else if (child_type != NODE_VALUE) {
-            void *result = recursive_delete(key, key_len, childptr);
-            if (*childptr == 0) {
-                node1_remove_child(cur_node_slot_ptr, raw);
-            }
+            void *result = get_raw(*childptr);
+            node1_remove_child(cur_node_slot_ptr, raw);
             return result;
         }
-        return NULL;
+        void *result = recursive_delete(key, key_len, childptr);
+        if (*childptr == 0) {
+            node1_remove_child(cur_node_slot_ptr, raw);
+        }
+        return result;
     }
     case NODE_4: {
         node4_t *node4 = (node4_t *)raw;
@@ -777,22 +779,22 @@ void *recursive_delete(const unsigned char *key, size_t key_len,
                 --key_len;
             }
             enum node_type child_type = get_type(node48->children[idx]);
-            if (key_len == 0) {
-                if (child_type == NODE_VALUE) {
-                    void *result = get_raw(node48->children[idx]);
-                    node48_remove_child(cur_node_slot_ptr, node48, child_key,
-                                        child_idx, num_children);
-                    return result;
+            if (child_type == NODE_VALUE) {
+                if (key_len > 0) {
+                    return NULL;
                 }
-            } else if (child_type != NODE_VALUE) {
-                void *result =
-                    recursive_delete(key, key_len, &node48->children[idx]);
-                if (node48->children[idx] == 0) {
-                    node48_remove_child(cur_node_slot_ptr, node48, child_key,
-                                        child_idx, num_children);
-                }
+                void *result = get_raw(node48->children[idx]);
+                node48_remove_child(cur_node_slot_ptr, node48, child_key,
+                                    child_idx, num_children);
                 return result;
             }
+            void *result =
+                recursive_delete(key, key_len, &node48->children[idx]);
+            if (node48->children[idx] == 0) {
+                node48_remove_child(cur_node_slot_ptr, node48, child_key,
+                                    child_idx, num_children);
+            }
+            return result;
         }
         // child not found
         return NULL;
@@ -810,28 +812,26 @@ void *recursive_delete(const unsigned char *key, size_t key_len,
             --key_len;
         }
         enum node_type child_type = get_type(node256->children[idx]);
-        if (key_len == 0) {
-            if (child_type == NODE_VALUE) {
-                void *result = get_raw(node256->children[idx]);
-                node256_remove_child(cur_node_slot_ptr, node256, idx,
-                                     num_children);
-                return result;
+        if (child_type == NODE_VALUE) {
+            if (key_len > 0) {
+                return NULL;
             }
-        } else if (child_type != NODE_VALUE) {
-            void *result =
-                recursive_delete(key, key_len, &node256->children[idx]);
-            if (node256->children[idx] == 0) {
-                node256_remove_child(cur_node_slot_ptr, node256, idx,
-                                     num_children);
-            }
+            void *result = get_raw(node256->children[idx]);
+            node256_remove_child(cur_node_slot_ptr, node256, idx, num_children);
             return result;
         }
+        void *result = recursive_delete(key, key_len, &node256->children[idx]);
+        if (node256->children[idx] == 0) {
+            node256_remove_child(cur_node_slot_ptr, node256, idx, num_children);
+        }
+        return result;
     }
     }
-    return NULL;
+    abort();
 }
 
 void *art_delete(struct art *art, const unsigned char *key, size_t key_len) {
+    assert(key);
     node_slot_t *cur_node_slot_ptr = &art->root;
     void *result = recursive_delete(key, key_len, cur_node_slot_ptr);
     art->size -= (result != NULL);

@@ -296,6 +296,21 @@ TEST(ARTTest, Delete0) {
     art_free(&a);
 }
 
+TEST(ARTTest, Delete1) {
+    struct art a;
+    art_init(&a);
+    insert_and_get(&a, "abc", 3, (void *)0x100, nullptr);
+    insert_and_get(&a, "ab", 3, (void *)0x200, nullptr);
+    ASSERT_EQ(art_delete(&a, reinterpret_cast<const unsigned char *>("ab"), 2),
+              (void *)0x200);
+    ASSERT_EQ(art_delete(&a, reinterpret_cast<const unsigned char *>("abc"), 3),
+              (void *)0x100);
+    insert_and_get(&a, "abc", 3, (void *)0x100, nullptr);
+    ASSERT_EQ(art_delete(&a, reinterpret_cast<const unsigned char *>("ab"), 2),
+              nullptr);
+    art_free(&a);
+}
+
 int art_count_cb(void *data, const unsigned char *key, uint32_t key_len,
                  void *value) {
     ++(*(uint64_t *)data);
@@ -359,7 +374,7 @@ void Delete(char key[256][5], int tree_size) {
     art_free(&a);
 }
 
-TEST(ARTTest, Delete1) {
+TEST(ARTTest, Delete2) {
     static char keys1[256][5];
     static char keys2[455][5];
     keys1[0][0] = keys2[0][0] = 'a';
@@ -492,11 +507,11 @@ void TestRandom() {
     Random rd;
     std::unordered_map<std::string, void *> m;
     for (unsigned long i = 0; i < 2000; ++i) {
-        std::string rand_str = rd.RandString();
+        std::string rand_key = rd.RandString();
         void *value = (void *)((i + 1) << 8);
-        insert_and_get(&a, rand_str.c_str(), rand_str.size(), value,
-                       m[rand_str]);
-        m[rand_str] = value;
+        insert_and_get(&a, rand_key.c_str(), rand_key.size(), value,
+                       m[rand_key]);
+        m[rand_key] = value;
     }
     for (auto &[k, v] : m) {
         ASSERT_EQ(art_get(&a,
@@ -505,13 +520,17 @@ void TestRandom() {
                   v);
     }
     ASSERT_EQ(a.size, m.size());
-    // FIXME
-//    for (auto &[k, v] : m) {
-//        ASSERT_EQ(art_delete(&a,
-//                             reinterpret_cast<const unsigned char *>(k.c_str()),
-//                             k.size()),
-//                  v);
-//    }
+    for (auto &[k, v] : m) {
+        ASSERT_EQ(art_delete(&a, (const unsigned char *)"", 0), nullptr);
+        ASSERT_EQ(art_get(&a,
+                          reinterpret_cast<const unsigned char *>(k.c_str()),
+                          k.size()),
+                  v);
+        ASSERT_EQ(art_delete(&a,
+                             reinterpret_cast<const unsigned char *>(k.c_str()),
+                             k.size()),
+                  v);
+    }
     art_free(&a);
 }
 
